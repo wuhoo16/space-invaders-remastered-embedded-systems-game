@@ -79,7 +79,9 @@ void playerInit(void);
 
 uint8_t flag;
 uint16_t ADCMAIL;
-uint32_t Data;        // 12-bit ADC
+uint16_t Data;        // 12-bit ADC
+int16_t Prev_adc;
+int16_t adc_diff;
 
 
 //****starting code****
@@ -120,6 +122,8 @@ int main1(void){
 struct state{
 	int16_t x;
 	int16_t y;
+	uint8_t width;
+	uint8_t height;
 	const uint16_t *image;
 	// status
 };
@@ -158,6 +162,8 @@ int main2(void){uint8_t i;
   }
 }
 
+
+
 //****player movement sandbox****
 // how to interface player movement to slide port?
 state_t player;
@@ -170,23 +176,43 @@ int main(void){
 	SysTick_Init();
   ST7735_FillScreen(0x0000);            // set screen to black
   
-  ST7735_DrawBitmap(53, 151, Bunker0, 18,5);
+  ST7735_DrawBitmap(53, 141, Bunker0, 18,5);
 
   Delay100ms(2);
 	EnableInterrupts();
 	Data = ADCMAIL;
+	Prev_adc = ADCMAIL;
 	playerInit();
-	ST7735_DrawBitmap(player.x, player.y, player.image, 18,8); // player position init based on ADC
+	ST7735_DrawBitmap(player.x, player.y, player.image, player.width, player.height); // player position init based on ADC
   while(1){
 		// move player sprite by drawing in updated position (fail)
 		if(flag != 0){
 			flag = 0;
 			Data = ADCMAIL;
-			player.x = Data/40;
-			ST7735_DrawBitmap(player.x, player.y, player.image, 18,8);
+			adc_diff = (Data - Prev_adc);
+			if((adc_diff <= -32) && (player.x - 1) != 0)																				//move player one pixel to the left if new adc data is less than 32 of the previous
+			{
+				adc_diff /= 32;
+				for(int i = 0; i > adc_diff; i--){
+					if((player.x - 1) == 0)break;
+					player.x = player.x - 1;
+					ST7735_DrawBitmap(player.x, player.y, player.image, player.width, player.height);
+				}		
+			}
+			else if((adc_diff >= 32) && ((player.x + 1) != 127 - player.width)){																//move player one pixel to the right if new adc data is equal or greater than 32 of previous value
+				adc_diff /= 32;
+				for(int i = 0; i < adc_diff; i++){
+					if((player.x + 1) == 127 - player.width)break;
+					player.x = player.x + 1;
+					ST7735_DrawBitmap(player.x, player.y, player.image, player.width, player.height);
+				}
+			}
+			Prev_adc = Data;																							//save previous ADC value
 		}
   }
 }
+
+
 
 void testEnemyInit(void){uint8_t i;
 	for(i=0; i<4; i++){
@@ -234,9 +260,11 @@ void SysTick_Handler(void){ // every 16.67 ms
 }
 
 void playerInit(void){
-	player.x = Data/40;
+	player.x = Data/32;
 	player.y = 159;
-	player.image = ns;
+	player.width = 24;
+	player.height = 14;
+	player.image = onepixelborder;
 }
 // You can't use this timer, it is here for starter code only 
 // you must use interrupts to perform delays
