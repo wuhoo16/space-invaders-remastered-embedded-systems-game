@@ -119,7 +119,7 @@ int main1(void){
 }
 
 //****enemy movement sandbox****
-struct state{
+struct sprite{
 	int16_t x;
 	int16_t y;
 	uint8_t width;
@@ -127,8 +127,8 @@ struct state{
 	const uint16_t *image;
 	// status
 };
-typedef struct state state_t;
-state_t enemy[4];
+typedef struct sprite sprite_t;
+sprite_t enemy[4];
 // test main for sprite movement
 int main2(void){uint8_t i;
   PLL_Init(Bus80MHz);       // Bus clock is 80 MHz 
@@ -165,49 +165,49 @@ int main2(void){uint8_t i;
 
 
 //****player movement sandbox****
-// how to interface player movement to slide port?
-state_t player;
+sprite_t player;
 // test main for sprite movement
 int main(void){
-  PLL_Init(Bus80MHz);       // Bus clock is 80 MHz 
+  PLL_Init(Bus80MHz);    			// Bus clock is 80 MHz 
   Random_Init(1);
   Output_Init();
 	ADC_Init();
 	SysTick_Init();
-  ST7735_FillScreen(0x0000);            // set screen to black
+  ST7735_FillScreen(0x0000);	// set screen to black
   
   ST7735_DrawBitmap(53, 141, Bunker0, 18,5);
 
   Delay100ms(2);
 	EnableInterrupts();
-	Data = ADCMAIL;
-	Prev_adc = ADCMAIL;
+	Data = ADCMAIL;			// get init player position (ADC)
+	Prev_adc = Data;		// init previous value
 	playerInit();
 	ST7735_DrawBitmap(player.x, player.y, player.image, player.width, player.height); // player position init based on ADC
   while(1){
 		// move player sprite by drawing in updated position (fail)
 		if(flag != 0){
-			flag = 0;
-			Data = ADCMAIL;
-			adc_diff = (Data - Prev_adc);
-			if((adc_diff <= -32) && (player.x - 1) != 0)																				//move player one pixel to the left if new adc data is less than 32 of the previous
-			{
-				adc_diff /= 32;
+			flag = 0;																			// acknowledge flag
+			Data = ADCMAIL;																// update player position
+			adc_diff = (Data - Prev_adc);									// calculate difference 
+			// if new ADC data is less than 32 of the previous, move player to the left
+			if((adc_diff <= -32) && (player.x - 1) != 0){	
+				adc_diff /= 32;															// convert to pixels
 				for(int i = 0; i > adc_diff; i--){
-					if((player.x - 1) == 0)break;
-					player.x = player.x - 1;
+					if((player.x - 1) == 0)break;							// left border reached
+					player.x = player.x - 1;									// move player one pixel to the left
 					ST7735_DrawBitmap(player.x, player.y, player.image, player.width, player.height);
 				}		
 			}
-			else if((adc_diff >= 32) && ((player.x + 1) != 127 - player.width)){																//move player one pixel to the right if new adc data is equal or greater than 32 of previous value
-				adc_diff /= 32;
-				for(int i = 0; i < adc_diff; i++){
-					if((player.x + 1) == 127 - player.width)break;
-					player.x = player.x + 1;
+			// move player to the right if new adc data is equal or greater than 32 of previous value
+			else if((adc_diff >= 32) && ((player.x + 1) != 127 - player.width)){
+				adc_diff /= 32;															// convert to pixels
+				for(int i = 0; i < adc_diff; i++){					
+					if((player.x+1) == 127-player.width)break;// right border reached
+					player.x = player.x + 1;									// move player one pixel to the right
 					ST7735_DrawBitmap(player.x, player.y, player.image, player.width, player.height);
 				}
 			}
-			Prev_adc = Data;																							//save previous ADC value
+			Prev_adc = Data;															// update previous ADC value
 		}
   }
 }
@@ -260,7 +260,7 @@ void SysTick_Handler(void){ // every 16.67 ms
 }
 
 void playerInit(void){
-	player.x = Data/32;
+	player.x = Data/32;	
 	player.y = 159;
 	player.width = 24;
 	player.height = 14;
