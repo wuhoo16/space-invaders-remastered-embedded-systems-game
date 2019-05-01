@@ -26,7 +26,7 @@ void ADC_Init(void){
 	delay = SYSCTL_RCGCADC_R;
 	delay = SYSCTL_RCGCADC_R;
 	ADC0_PC_R = 0x01;							// 7) configure for 125k samples/s
-	ADC0_SAC_R |= 0x08;						// average of 128 samples in attempt to elimate fluctuation in data readings (in the thousandths place)
+	//ADC0_SAC_R |= 0x08;						// average of 128 samples in attempt to elimate fluctuation in data readings (in the thousandths place)
 	ADC0_SSPRI_R = 0x0123;				// 8) seq3 is highest priority
 	ADC0_ACTSS_R &= ~0x0008;			// 9) disable sample sequencer 3
 	ADC0_EMUX_R &= ~0xF000;				// 10) seq3 is software trigger

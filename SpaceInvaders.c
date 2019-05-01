@@ -59,11 +59,16 @@
 #include "Sound.h"
 #include "Timer0.h"
 #include "Timer1.h"
+#include "Switches.h"
 
 #define PF123			(*((volatile uint32_t *)0x40025038))
 #define PF1       (*((volatile uint32_t *)0x40025008))
 #define PF2       (*((volatile uint32_t *)0x40025010))
 #define PF3       (*((volatile uint32_t *)0x40025020))
+	
+#define PE01      (*((volatile uint32_t *)0x40024012))
+#define PE0       (*((volatile uint32_t *)0x40024004))
+#define PE1				(*((volatile uint32_t *)0x40024008))
 	
 void DisableInterrupts(void); // Disable interrupts
 void EnableInterrupts(void);  // Enable interrupts
@@ -76,103 +81,49 @@ void moveEnemyDown(void);
 
 void SysTick_Init(void);
 void playerInit(void);
+void missilesInit(void);
 
-uint8_t flag;
-uint16_t ADCMAIL;
-uint16_t Data;        // 12-bit ADC
-int16_t Prev_adc;
-int16_t adc_diff;
-
-
-//****starting code****
-int main1(void){
-  PLL_Init(Bus80MHz);       // Bus clock is 80 MHz 
-  Random_Init(1);
-
-  Output_Init();
-  ST7735_FillScreen(0x0000);            // set screen to black
-  
-  ST7735_DrawBitmap(52, 159, ns, 18,8); // player ship middle bottom
-  ST7735_DrawBitmap(53, 151, Bunker0, 18,5);
-
-  ST7735_DrawBitmap(0, 9, SmallEnemy10pointA, 16,10);
-  ST7735_DrawBitmap(20,9, SmallEnemy10pointB, 16,10);
-  ST7735_DrawBitmap(40, 9, SmallEnemy20pointA, 16,10);
-  ST7735_DrawBitmap(60, 9, SmallEnemy20pointB, 16,10);
-  ST7735_DrawBitmap(80, 9, SmallEnemy30pointA, 16,10);
-  ST7735_DrawBitmap(100, 9, SmallEnemy30pointB, 16,10);
-
-  Delay100ms(50);              // delay 5 sec at 80 MHz
-
-  ST7735_FillScreen(0x0000);            // set screen to black
-  ST7735_SetCursor(1, 1);
-  ST7735_OutString("GAME OVER");
-  ST7735_SetCursor(1, 2);
-  ST7735_OutString("Nice try,");
-  ST7735_SetCursor(1, 3);
-  ST7735_OutString("Earthling!");
-  ST7735_SetCursor(2, 4);
-  LCD_OutDec(1234);
-  while(1){
-  }
-
-}
-
-//****enemy movement sandbox****
+//enum status declaration and sprite struct declaration
+enum state{alive, moving, dead, dying};
+typedef enum state status_t;
 struct sprite{
 	int16_t x;
 	int16_t y;
 	uint8_t width;
 	uint8_t height;
 	const uint16_t *image;
-	// status
+	status_t status;					//alive, moving, dead, or dying
 };
 typedef struct sprite sprite_t;
-sprite_t enemy[4];
-// test main for sprite movement
-int main2(void){uint8_t i;
-  PLL_Init(Bus80MHz);       // Bus clock is 80 MHz 
-  Random_Init(1);
-  Output_Init();
-//	ADC_Init();
-//	SysTick_Init();
-  ST7735_FillScreen(0x0000);            // set screen to black
-  
-  ST7735_DrawBitmap(52, 159, ns, 18,8); // player ship middle bottom
-  ST7735_DrawBitmap(53, 151, Bunker0, 18,5);
 
-	testEnemyInit();
-  Delay100ms(2);
-	EnableInterrupts();
-  while(1){
-		for(i=0; i<26; i++){
-			moveEnemyRight();
-			Delay100ms(1);
-		}
-		for(i=0; i<10; i++){
-			moveEnemyDown();
-		}
-		for(i=0; i<26; i++){
-			moveEnemyLeft();
-			Delay100ms(1);
-		}
-		for(i=0; i<10; i++){
-			moveEnemyDown();
-		}
-  }
-}
+//global variable declarations below:
+uint8_t flag;
+uint16_t ADCMAIL;
+uint16_t Data;        // 12-bit ADC
+int16_t Prev_adc;
+int16_t adc_diff;
+
+uint8_t SW0;				
+uint8_t SW1;
+sprite_t missiles[2];
+uint8_t m1spawn = 0;
+uint8_t m2spawn = 0;
+uint8_t movemissileflag;
 
 
-
-//****player movement sandbox****
 sprite_t player;
+sprite_t enemy[4];
+
+
 // test main for sprite movement
 int main(void){
   PLL_Init(Bus80MHz);    			// Bus clock is 80 MHz 
   Random_Init(1);
   Output_Init();
 	ADC_Init();
+	PortE_Init();
 	SysTick_Init();
+	Timer1_Init(1333333);				//Timer1 interrupts at 60 Hz
   ST7735_FillScreen(0x0000);	// set screen to black
   
   ST7735_DrawBitmap(53, 141, Bunker0, 18,5);
@@ -182,9 +133,41 @@ int main(void){
 	Data = ADCMAIL;			// get init player position (ADC)
 	Prev_adc = Data;		// init previous value
 	playerInit();
+	missilesInit();
 	ST7735_DrawBitmap(player.x, player.y, player.image, player.width, player.height); // player position init based on ADC
   while(1){
-		// move player sprite by drawing in updated position (fail)
+			if(m1spawn == 1)
+			{
+					m1spawn = 0;					//clear flag
+					ST7735_DrawBitmap(missiles[0].x, missiles[0].y, missiles[0].image, missiles[0].width, missiles[0].height);
+					missiles[0].status = moving;
+			}
+			if(m2spawn == 1){
+					m2spawn = 0;					//clear flag
+				  ST7735_DrawBitmap(missiles[1].x, missiles[1].y, missiles[1].image, missiles[1].width, missiles[1].height);
+					missiles[1].status = moving;
+			}
+			
+/*		if(SW0 == 1){
+		SW0 = 0;		//clear switch 0 flag
+			if(missiles[0].status == dead){										//case for if 1st missile gone/offscreen
+				missiles[0].x = (player.x + player.width/2) - missiles[0].width/2;			//assign starting x pos of missile
+				missiles[0].y = (player.y - player.height);															//assign starting y pos of missile	
+				ST7735_DrawBitmap(missiles[0].x, missiles[0].y, missiles[0].image, missiles[0].width, missiles[0].height);
+				missiles[0].status = moving;
+			}
+			else if((missiles[0].status == moving) && (missiles[1].status == dead)){							//case for if 2nd missile gone/offscreen
+				missiles[1].x = (player.x + player.width/2) - missiles[1].width/2;			//assign starting x pos of missile
+				missiles[1].y = (player.y - player.height);															//assign starting y pos of missile	
+				ST7735_DrawBitmap(missiles[1].x, missiles[1].y, missiles[1].image, missiles[1].width, missiles[1].height);
+				missiles[1].status = moving;
+			}
+		}
+*/
+
+		
+		
+		// move player sprite by comparing the current ADC sample to the previous ADC value
 		if(flag != 0){
 			flag = 0;																			// acknowledge flag
 			Data = ADCMAIL;																// update player position
@@ -209,6 +192,20 @@ int main(void){
 			}
 			Prev_adc = Data;															// update previous ADC value
 		}
+		
+		//move the missiles if any of the missiles have status of moving
+		if(movemissileflag == 1){
+			movemissileflag = 0;													//clear flag
+			for(int i = 0; i < 2; i++)
+			{
+				if(missiles[i].status == moving){
+					missiles[i].y--;
+					ST7735_DrawBitmap(missiles[i].x, missiles[i].y, missiles[i].image, missiles[i].width, missiles[i].height);
+				}
+			}
+		}
+		
+		
   }
 }
 
@@ -222,7 +219,6 @@ void testEnemyInit(void){uint8_t i;
 		ST7735_DrawBitmap(enemy[i].x, enemy[i].y, enemy[i].image, 16, 10);
 	}
 }
-
 void moveEnemyRight(void){uint8_t i;
 	for(i=0; i<4; i++){
 		enemy[i].x += 2;
@@ -230,7 +226,6 @@ void moveEnemyRight(void){uint8_t i;
 	}
 	
 }
-
 void moveEnemyLeft(void){uint8_t i;
 	for(i=0; i<4; i++){
 		enemy[i].x -= 2;
@@ -238,18 +233,17 @@ void moveEnemyLeft(void){uint8_t i;
 	}
 	
 }
-
 void moveEnemyDown(void){uint8_t i;
 	for(i=0; i<4; i++){
 		enemy[i].y += 1;
 		ST7735_DrawBitmap(enemy[i].x, enemy[i].y, enemy[i].image, 16, 10);
 	}
-	
 }
+
 
 void SysTick_Init(void){
   NVIC_ST_CTRL_R = 0;                   // 1) disable SysTick during setup
-  NVIC_ST_RELOAD_R = 1333333;  					// 2) reload value = 80MHz/60HZ 
+  NVIC_ST_RELOAD_R = 1333333;  					// 2) reload value = 1333333 for clock running at 80MHz --> 60 Hz
   NVIC_ST_CURRENT_R = 0;                // 3) any write to current clears it
   NVIC_ST_CTRL_R = 0x0007;              // 4) enable SysTick with core clock and interrupts
 }
@@ -257,6 +251,32 @@ void SysTick_Init(void){
 void SysTick_Handler(void){ // every 16.67 ms
   ADCMAIL = ADC_In();	// save the ADC data to a mailbox (global variable)
 	flag = 1;						// set the semaphore flag 
+	
+			if(PE0 == 1){
+				SW0 = PE0;				//read data to clear Port E data
+				if(missiles[0].status == dead){										//case for if 1st missile gone/offscreen
+					missiles[0].x = (player.x + player.width/2) - missiles[0].width/2;			//assign starting x pos of missile
+					missiles[0].y = (player.y - player.height);															//assign starting y pos of missile	
+					m1spawn = 1;
+				}
+				else if((missiles[0].y < 133) && (missiles[0].status == moving) && (missiles[1].status == dead)){							//case for if 2nd missile gone/offscreen and 1st missile has traveled at least 12 pixels
+					missiles[1].x = (player.x + player.width/2) - missiles[1].width/2;			//assign starting x pos of missile
+					missiles[1].y = (player.y - player.height);															//assign starting y pos of missile	
+					m2spawn = 1;
+				}
+		}																											
+			
+	SW1 = PE1 >> 1;
+	
+	//if collision occured or missile off top of screen, change missile status to dead //CURRENTLY ONLY CHECKS IF MISSILE IS OFFSCREEN DOES NOT DO COLLISION DETECTION
+	for(int i = 0; i < 2; i++){
+		if(missiles[i].y == 0){
+			missiles[i].status = dead;
+		}
+		else{
+			movemissileflag = 1;
+		}
+	}
 }
 
 void playerInit(void){
@@ -265,7 +285,20 @@ void playerInit(void){
 	player.width = 24;
 	player.height = 14;
 	player.image = onepixelborder;
+	player.status = alive;
 }
+
+void missilesInit(void){									//at beginning of the game, both missiles have not been fired so status is dead
+	for(int i = 0; i < 2; i++){
+		missiles[i].x = -1;
+		missiles[i].y = -1;
+		missiles[i].width = 8;
+		missiles[i].height = 12;
+		missiles[i].image = missile;
+		missiles[i].status = dead;
+	}
+}
+
 // You can't use this timer, it is here for starter code only 
 // you must use interrupts to perform delays
 void Delay100ms(uint32_t count){uint32_t volatile time;
