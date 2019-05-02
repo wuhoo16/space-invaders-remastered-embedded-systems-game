@@ -15,27 +15,27 @@
 // Code files contain the actual implemenation for public functions
 // this file also contains an private functions and private data
 
-#define DAC (*((volatile uint32_t *) 0x4000503C))	// modify only Port B bits 0-3
+#define DAC (*((volatile uint32_t *) 0x4000515C))	// modify only Port B bits 0-5
 // **************DAC_Init*********************
-// Initialize 4-bit DAC, called once 
+// Initialize 4-bit DAC, called once   	//EDITED TO BE A 6-BIT DAC
 // Input: none
 // Output: none
 void DAC_Init(void){
-	volatile uint32_t delay;
 	SYSCTL_RCGCGPIO_R |= 0x00000002;	// activate Port B
+	volatile uint32_t delay;
 	delay = SYSCTL_RCGCGPIO_R;				// allow time to finish activating
-	GPIO_PORTB_AMSEL_R &= ~0x0F;			// no analog
-	GPIO_PORTB_PCTL_R &= ~0x0000FFFF;	// regular function
-	GPIO_PORTB_DIR_R |= 0x0F;					// make PB0-3 outputs
-	GPIO_PORTB_AFSEL_R &= ~0x0F;			// disable alternate function
-	GPIO_PORTB_DEN_R |= 0x0F;					// digital enable PB0-3
+	GPIO_PORTB_AMSEL_R &= ~0x3F;			// no analog
+	GPIO_PORTB_PCTL_R &= ~0x00FFFFFF;	// regular function
+	GPIO_PORTB_DIR_R |= 0x3F;					// make PB0-5 outputs
+	GPIO_PORTB_AFSEL_R &= ~0x3F;			// disable alternate function
+	GPIO_PORTB_DEN_R |= 0x3F;					// digital enable PB0-5
 }
 
 // **************DAC_Out*********************
 // output to DAC
-// Input: 4-bit data, 0 to 15 
-// Input=n is converted to n*3.3V/15
+// Input: 4-bit data, 0 to 15 				//NOW 6-BIT input data, from 0 to 63
+// Input=n is converted to n*3.3V/15	//converted to n*3.3/63
 // Output: none
-void DAC_Out(uint32_t data){
-	DAC = data;	// output digital signal to 4-bit DAC
+void DAC_Out(uint8_t data){
+	DAC = data;	// output digital signal to 6-bit DAC
 }
