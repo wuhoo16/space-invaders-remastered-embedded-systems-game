@@ -145,16 +145,16 @@ int main(void){
 	DAC_Init();
 	PortE_Init();
 	SysTick_Init();
-	Timer1_Init(&playsound, 7255);// Timer1 interrupts at 11.025 kHZ (reload value needed is 7255.24
+	Timer1_Init(&playsound, 7255);// Timer1 interrupts at 11.025 kHZ (reload value needed is 7255.24)
   ST7735_FillScreen(0x0000);		// set screen to black
   
-  ST7735_DrawBitmap(53, 141, Bunker0, 18,5);
+  ST7735_DrawBitmap(53, 141, Bunker0, 18,5); //change Bunker0 to dorm image later
 	testEnemyInit();
 	collisionFlag_Init();
   Delay100ms(2);
 	EnableInterrupts();
 	Data = ADCMAIL;			// get init player position (ADC)
-	Prev_adc = Data;		// init previous value
+	Prev_adc = Data;		// init previous adc value
 	playerInit();
 	missilesInit();
 	ST7735_DrawBitmap(player.x, player.y, player.image, player.width, player.height); 		// player position init based on ADC
@@ -248,14 +248,15 @@ void SysTick_Handler(void){ // every 16.67 ms
   ADCMAIL = ADC_In();	// save the ADC data to a mailbox (global variable)
 	flag = 1;						// set the semaphore flag 
 	
-			if(PE0 == 1){
+		//CHECK PORT E PIN 0 (PRIMARY FIRE BUTTON) TO DETERMINE MISSILE SPAWN (only 2 missiles allowed onscreen at a time)
+		if(PE0 == 1){
 				SW0 = PE0;				// read data to clear Port E data
 				if(missiles[0].status == dead){// case for if 1st missile gone/offscreen
 					missiles[0].x = (player.x + player.width/2) - missiles[0].width/2;			// assign starting x pos of missile
 					missiles[0].y = (player.y - player.height);															// assign starting y pos of missile	
 					m1spawn = 1;
-				}															// case for if 2nd missile gone/offscreen and 1st missile has traveled at least 12 pixels
-				else if((missiles[0].y < 133) && (missiles[0].status == moving) && (missiles[1].status == dead)){							
+				}															// case for if 2nd missile gone/offscreen and 1st missile has traveled at least 11 pixels
+				else if((missiles[0].y <= 134) && (missiles[0].status == moving) && (missiles[1].status == dead)){							
 					missiles[1].x = (player.x + player.width/2) - missiles[1].width/2;			// assign starting x pos of missile
 					missiles[1].y = (player.y - player.height);															// assign starting y pos of missile	
 					m2spawn = 1;
@@ -264,7 +265,7 @@ void SysTick_Handler(void){ // every 16.67 ms
 			
 	SW1 = PE1 >> 1;
 	
-	// if collision occurred or missile off top of screen, change missile status to dead
+		// COLLISION DETECTION: if collision occurred or missile off top of screen --> Missile status = dead
 	for(int i = 0; i < 2; i++){
 		// check if missile has reached top of screen
 		if(missiles[i].y == 0){
@@ -273,6 +274,7 @@ void SysTick_Handler(void){ // every 16.67 ms
 		else{
 			movemissileflag = 1;
 		}
+		
 		// check if collision has occurred (6 test enemies)
 		if(missiles[i].status == moving){
 			for(int j = 0; j < 6; j++){
@@ -296,16 +298,19 @@ void SysTick_Handler(void){ // every 16.67 ms
 							(((missiles[i].x >= enemy[j].x) && (missiles[i].x <= (enemy[j].x + enemy[j].width))) ||	
 							// check horizontal overlap (left)
 							 ((missiles[i].x + missiles[i].width >= enemy[j].x) && (missiles[i].x + missiles[i].width <= (enemy[j].x + enemy[j].width))))){
-						enemy[j].status = dead;  		// update status
+						enemy[j].status = dead;  		// update enemy sprite status to DEAD
 						enemyCollisionFlag[j] = 1;	// set collision flag
-						missiles[i].status = dead;	// update status
+						missiles[i].status = dead;	// update missile status to DEAD
 						missileCollisionFlag[i] = 1;// set collision flag
+					  sound_pointer = explosion1; //set current_sound to explosion
+						sound_length = 6964;				//set sound length
+						sound_index = 0;						//reset index
 					}
 				}
 			}
 		}
 	}
-}
+}//END OF SYSTICK ISR--------------------------------------------------------------------------------------------------------------------------------
 
 
 
@@ -342,8 +347,8 @@ void missilesInit(void){									//at beginning of the game, both missiles have 
 	for(int i = 0; i < 2; i++){
 		missiles[i].x = -1;
 		missiles[i].y = -1;
-		missiles[i].width = 8;
-		missiles[i].height = 12;
+		missiles[i].width = 5;
+		missiles[i].height = 10;
 		missiles[i].image = missile;
 		missiles[i].status = dead;
 	}
@@ -380,6 +385,8 @@ void Delay100ms(uint32_t count){uint32_t volatile time;
     count--;
   }
 }
+
+
 
 // enemy movement testing/playground
 void testEnemyInit(void){uint8_t i;

@@ -8,6 +8,7 @@
 #include <stdint.h>
 extern const unsigned char silence[1];
 extern const unsigned char laser5[3600];
+extern const unsigned char explosion1[6964];
 
 void Sound_Init(void);
 void Sound_Play(const uint8_t *pt, uint32_t count);
