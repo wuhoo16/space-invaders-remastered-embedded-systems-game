@@ -171,23 +171,23 @@ uint8_t move_enemy = 0;
 //MAIN STARTS HERE
 //----------------------------------------------------------------------------
 int main(void){
-  PLL_Init(Bus80MHz);    				// Bus clock is 80 MHz 
+  PLL_Init(Bus80MHz); // Bus clock is 80 MHz 
   Random_Init(1);
   Output_Init();
 	ADC_Init();
 	DAC_Init();
 	PortE_Init();
 	SysTick_Init();
-	Timer1_Init(&playsound, 7256);// Timer1 interrupts at 11.025 kHZ (reload value needed is 7256.24)
-	Timer0_Init(&animation, 10000000); //Timer0 interrupts at 8 Hz (every 125 ms)
-	Timer2_Init(&move_projectiles, 1000000); //Timer2 interrupts at 80 Hz (all projectile movement)
-  ST7735_FillScreen(0x0000);		// set screen to black
+	Timer1_Init(&playsound, 7256);						// Timer1 interrupts at 11.025 kHZ (reload value needed is 7256.24)
+	Timer0_Init(&animation, 10000000); 				//Timer0 interrupts at 8 Hz (every 125 ms)
+	Timer2_Init(&move_projectiles, 1000000); 	//Timer2 interrupts at 80 Hz (all projectile movement)
+  ST7735_FillScreen(0x0000);								// set screen to black
   
   ST7735_DrawBitmap(53, 141, Bunker0, 18,5); //change Bunker0 to dorm image later
 	missilesInit();
 	testEnemyInit();
 	collisionFlag_Init();
-	explosionsInit();
+//	explosionsInit();
 	playerInit();
   Delay100ms(2);
 	EnableInterrupts();
@@ -281,7 +281,7 @@ int main(void){
   }
 
 
-	
+
 //EXPLOSION	ANIMATIONS (CHECKING FRAMES AND CLEARING EXPLOSIONS ONCE ANIMATION IS DONE)
 		if(explosion_done == 0 && explosion_counter >= 1 && explosion_frame < 5){	//only draw next frame if explosion counter is set (125 ms has passed since last frame); if no collosions occur, explosion counter = 0 and explosion frame = -1
 				ST7735_DrawBitmap(explosion_anim[explosion_frame].x, explosion_anim[explosion_frame].y, explosion_anim[explosion_frame].image, explosion_anim[explosion_frame].width, explosion_anim[explosion_frame].height);
@@ -299,7 +299,7 @@ int main(void){
 			ST7735_FillRect(x_save, y_save - explosion_anim[4].height, explosion_anim[4].width, explosion_anim[4].height, 0x0000);
 		}
 	
-	
+		
 		
 //ENEMY MOVEMENT (ACTUAL DRAWING OF BMPs): dependent on flags set in SysTick ISR
 	 for(int i = 0; i < 6; i++){
@@ -363,17 +363,6 @@ void SysTick_Handler(void){ // every 16.67 ms
 		if(missiles[i].status == moving){
 			for(int j = 0; j < 6; j++){
 				if(enemy[j].status == alive){	// skip collision detection if enemy is dead
-	/*				// check vertical collision
-							// check vertical overlap (bottom)
-					if(((missiles[i].y - missiles[i].height) <= enemy[j].y) &&
-							// check horizontal overlap (right)
-							(((missiles[i].x >= enemy[j].x) && (missiles[i].x <= (enemy[j].x + enemy[j].width))) ||	
-							// check horizontal overlap (left)
-							 ((missiles[i].x + missiles[i].width >= enemy[j].x) && (missiles[i].x + missiles[i].width <= (enemy[j].x + enemy[j].width))))){	
-						enemy[j].status = dead;
-						missiles[i].status = dead;
-					} 
-	*/
 							// check vertical overlap (top)
 					if((((missiles[i].y < enemy[j].y) && (missiles[i].y > (enemy[j].y - enemy[j].height))) ||
 							// check vertical overlap (bottom)
@@ -389,8 +378,7 @@ void SysTick_Handler(void){ // every 16.67 ms
 					  sound_pointer = explosion1; //set current_sound to explosion
 						sound_length = 6964;				//set sound length
 						sound_index = 0;						//reset index
-					
-									
+													
 					  explosion_frame = 0;
 					  explosion_counter = 1;
 						if(explosion_done == 0){		//if previous explosion is not done yet once another collosion occurs, set clear_explosion_early flag and save previous coordinates before overwriting
@@ -402,8 +390,7 @@ void SysTick_Handler(void){ // every 16.67 ms
 							explosion_anim[i].status = alive;
 							explosion_anim[i].x = (enemy[j].x - 2); //center explosion at middle of enemy sprite
 							explosion_anim[i].y = (enemy[j].y + 10);
-						}
-						
+						}						
 					}
 				}
 			}
@@ -455,9 +442,9 @@ void playsound(void){
 					DAC_Out(sound_pointer[sound_index]);
 					sound_index++;
 			}
-			else{	//sound_index == sound_length and sound effect is done playing
+			else{	// sound_index == sound_length and sound effect is done playing
 					sound_pointer = silence;
-					sound_index = 0;			//reset index once the sound is done playing
+					sound_index = 0;			// reset index once the sound is done playing
 			}
 	}
 	
@@ -465,7 +452,7 @@ void playsound(void){
 
 void animation(void){
 	if(explosion_done == 0){
-		explosion_counter++; //increment counter every 125 ms
+		explosion_counter++; // increment counter every 125 ms
 	}
 }
 
@@ -483,18 +470,18 @@ void move_projectiles(void) {
 
 
 
-//SPRITES INITIALIZATION FUNCTIONS BELOW
+// SPRITES INITIALIZATION FUNCTIONS BELOW
 //---------------------------------------
 void playerInit(void){
 	player.x = Data/32;	
 	player.y = 159;
-	player.width = 24;
-	player.height = 14;
-	player.image = onepixelborder;
+	player.width = 18;
+	player.height = 8;
+	player.image = tm4ship;
 	player.status = alive;
 }
 
-void missilesInit(void){									//at beginning of the game, both missiles have not been fired so status is dead
+void missilesInit(void){// at beginning of the game, both missiles have not been fired so status is dead
 	for(int i = 0; i < 2; i++){
 		missiles[i].x = -1;
 		missiles[i].y = -1;
@@ -513,6 +500,7 @@ void explosionsInit(void){
 			explosion_anim[i].status = dead;
 		}
 }
+
 
 // COLLISION FLAG INITIALIZATION (TEST)
 //---------------------------------------
