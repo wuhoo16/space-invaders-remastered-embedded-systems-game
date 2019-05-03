@@ -60,6 +60,7 @@
 #include "Sound.h"
 #include "Timer0.h"
 #include "Timer1.h"
+#include "Timer2.h"
 #include "Switches.h"
 
 #define PF123			(*((volatile uint32_t *)0x40025038))
@@ -86,10 +87,15 @@ void moveEnemyDown(void);
 void SysTick_Init(void);
 void playerInit(void);
 void missilesInit(void);
+void collisionFlag_Init(void);
+void explosionsInit(void);
 
 void playsound(void);	// function that outputs samples of sound arrays depending on global varables
 											// that specify which sound effect and length of sample array
-void collisionFlag_Init(void);
+void animation(void);
+
+void move_projectiles(void);
+
 
 //ENUM AND STRUCT DEFINITIONS
 enum state{alive, moving, dead, dying};
@@ -105,6 +111,22 @@ struct sprite{
 };
 typedef struct sprite sprite_t;	// sprite_t for sprites
 
+struct enemy_sprite{
+	int16_t x;
+	int16_t y;
+	uint8_t width;
+	uint8_t height;
+	const uint16_t *image;
+	status_t status; 							//alive, moving, dead, or dying
+	uint8_t left;
+	uint8_t right;
+	uint8_t up;
+	uint8_t down;
+	uint8_t down_counter;
+};
+typedef struct enemy_sprite enemy_t;
+
+
 
 
 //GLOBAL VARIABLES DECLARATIONS BELOW
@@ -114,6 +136,7 @@ uint16_t ADCMAIL;
 uint16_t Data;        // 12-bit ADC
 int16_t Prev_adc;
 int16_t adc_diff;
+
 
 //missile global variables
 uint8_t SW0;				
@@ -126,14 +149,24 @@ uint8_t enemyCollisionFlag[6] = {0,0,0,0,0,0};
 //sprites
 sprite_t player;
 sprite_t missiles[2];
-sprite_t enemy[6];
+enemy_t enemy[6];
+sprite_t explosion_anim[5];
 
 //sound global variable flags
 const unsigned char *sound_pointer = silence; 
 uint32_t sound_length;						//size of current sample array
 uint32_t sound_index = 0;
 
+//explosion animation global variables
+uint8_t explosion_counter = 0;
+uint8_t explosion_frame = 0;
+uint8_t explosion_done = 1;
+uint8_t clear_explosion_early = 0;
+uint16_t x_save;
+uint16_t y_save;
 
+//enemy movement flags
+uint8_t move_enemy = 0;
 
 //MAIN STARTS HERE
 //----------------------------------------------------------------------------
@@ -145,18 +178,22 @@ int main(void){
 	DAC_Init();
 	PortE_Init();
 	SysTick_Init();
-	Timer1_Init(&playsound, 7255);// Timer1 interrupts at 11.025 kHZ (reload value needed is 7255.24)
+	Timer1_Init(&playsound, 7256);// Timer1 interrupts at 11.025 kHZ (reload value needed is 7256.24)
+	Timer0_Init(&animation, 10000000); //Timer0 interrupts at 8 Hz (every 125 ms)
+	Timer2_Init(&move_projectiles, 1000000); //Timer2 interrupts at 80 Hz (all projectile movement)
   ST7735_FillScreen(0x0000);		// set screen to black
   
   ST7735_DrawBitmap(53, 141, Bunker0, 18,5); //change Bunker0 to dorm image later
+	missilesInit();
 	testEnemyInit();
 	collisionFlag_Init();
+	explosionsInit();
+	playerInit();
   Delay100ms(2);
 	EnableInterrupts();
 	Data = ADCMAIL;			// get init player position (ADC)
 	Prev_adc = Data;		// init previous adc value
-	playerInit();
-	missilesInit();
+	
 	ST7735_DrawBitmap(player.x, player.y, player.image, player.width, player.height); 		// player position init based on ADC
 // START OF GAME ENGINE	
   while(1){
@@ -223,7 +260,7 @@ int main(void){
 		
 		
 		
-		// SIMPLE SPRITE DEATH (testing collision)
+// SIMPLE SPRITE DEATH (testing collision)-----------------------------------------------------------------
 		for(int i = 0; i < 2; i++){
 			if(missileCollisionFlag[i] == 1){
 				missileCollisionFlag[i] = 0;	// acknowledge
@@ -235,20 +272,73 @@ int main(void){
 			if(enemyCollisionFlag[j] == 1){
 				enemyCollisionFlag[j] = 0;		// acknowledge
 				ST7735_FillRect(enemy[j].x, enemy[j].y - enemy[j].height, enemy[j].width, enemy[j].height, 0x0000);
-
+				//draw first frame of explosion
+				ST7735_DrawBitmap(explosion_anim[explosion_frame].x, explosion_anim[explosion_frame].y, explosion_anim[explosion_frame].image, explosion_anim[explosion_frame].width, explosion_anim[explosion_frame].height);					
+				explosion_counter = 0; //clear counter
+				explosion_done = 0;		//timer0 starts incrementing explosion_counter
+				explosion_frame++;
 			}
-		}
-		
   }
+
+
+	
+//EXPLOSION	ANIMATIONS (CHECKING FRAMES AND CLEARING EXPLOSIONS ONCE ANIMATION IS DONE)
+		if(explosion_done == 0 && explosion_counter >= 1 && explosion_frame < 5){	//only draw next frame if explosion counter is set (125 ms has passed since last frame); if no collosions occur, explosion counter = 0 and explosion frame = -1
+				ST7735_DrawBitmap(explosion_anim[explosion_frame].x, explosion_anim[explosion_frame].y, explosion_anim[explosion_frame].image, explosion_anim[explosion_frame].width, explosion_anim[explosion_frame].height);
+		    explosion_counter = 0;
+				explosion_frame++;				//increment frame after drawing previous frame
+		}
+		if(explosion_frame == 5){ //last explosion frame has just been drawn --> clear explosion and set explosion_done flag for timer to stop incrementing counter
+				ST7735_FillRect(explosion_anim[4].x, explosion_anim[4].y - explosion_anim[4].height, explosion_anim[4].width, explosion_anim[4].height, 0x0000);
+				explosion_done = 1;
+				explosion_counter = 0;
+			  explosion_frame = 6;  //set to 6 until it is reset to 0 on the next collision
+		}
+		if(clear_explosion_early == 1){						//clears a previous explosions BMP if another explosion happens to occur before the first is done animating (prevents previous image from staying forever)
+			clear_explosion_early = 0; //clear flag
+			ST7735_FillRect(x_save, y_save - explosion_anim[4].height, explosion_anim[4].width, explosion_anim[4].height, 0x0000);
+		}
+	
+	
+		
+//ENEMY MOVEMENT (ACTUAL DRAWING OF BMPs): dependent on flags set in SysTick ISR
+	 for(int i = 0; i < 6; i++){
+		 if(enemy[i].status == dead){} //do nothing if enemy is dead
+		 else if(move_enemy == 1){
+			   move_enemy = 0;  //clear move_enemy flag and move ONE pixel in the correct direction
+				if(enemy[i].up == 1){
+					  enemy[i].y--;
+						ST7735_DrawBitmap(enemy[i].x, enemy[i].y, enemy[i].image, enemy[i].width, enemy[i].height);
+				}
+				else if(enemy[i].down == 1){
+					  enemy[i].y++;
+					  enemy[i].down_counter++;
+						ST7735_DrawBitmap(enemy[i].x, enemy[i].y, enemy[i].image, enemy[i].width, enemy[i].height);
+				}
+				else if(enemy[i].right == 1){
+					  enemy[i].x++;
+						ST7735_DrawBitmap(enemy[i].x, enemy[i].y, enemy[i].image, enemy[i].width, enemy[i].height);
+				}
+				else if(enemy[i].left == 1){
+					  enemy[i].x--;
+						ST7735_DrawBitmap(enemy[i].x, enemy[i].y, enemy[i].image, enemy[i].width, enemy[i].height);
+				}
+			}	
+	 }//iterate for each enemy sprite
+		
+		
+}//END OF GAME ENGINE
+	
 }//END OF MAIN--------------------------------------------------------------------------------------------------------------
 
 
 
 void SysTick_Handler(void){ // every 16.67 ms
+//PLAYER HORIZONTAL MOVEMENT: get ADC reading from slideport and save to mailbox------------------------------------------------------------
   ADCMAIL = ADC_In();	// save the ADC data to a mailbox (global variable)
 	flag = 1;						// set the semaphore flag 
 	
-		//CHECK PORT E PIN 0 (PRIMARY FIRE BUTTON) TO DETERMINE MISSILE SPAWN (only 2 missiles allowed onscreen at a time)
+//BUTTON CHECKING: CHECK PORT E PIN 0 (PRIMARY FIRE BUTTON) TO DETERMINE MISSILE SPAWN (only 2 missiles allowed onscreen at a time)---------
 		if(PE0 == 1){
 				SW0 = PE0;				// read data to clear Port E data
 				if(missiles[0].status == dead){// case for if 1st missile gone/offscreen
@@ -264,17 +354,11 @@ void SysTick_Handler(void){ // every 16.67 ms
 		}																											
 			
 	SW1 = PE1 >> 1;
-	
-		// COLLISION DETECTION: if collision occurred or missile off top of screen --> Missile status = dead
-	for(int i = 0; i < 2; i++){
-		// check if missile has reached top of screen
-		if(missiles[i].y == 0){
-			missiles[i].status = dead;
-		}
-		else{
-			movemissileflag = 1;
-		}
+
+
 		
+// COLLISION DETECTION: if collision occurred or missile off top of screen --> Missile status = dead-------------------------------------------
+	for(int i = 0; i < 2; i++){
 		// check if collision has occurred (6 test enemies)
 		if(missiles[i].status == moving){
 			for(int j = 0; j < 6; j++){
@@ -291,13 +375,13 @@ void SysTick_Handler(void){ // every 16.67 ms
 					} 
 	*/
 							// check vertical overlap (top)
-					if((((missiles[i].y <= enemy[j].y) && (missiles[i].y >= (enemy[j].y - enemy[j].height))) ||
+					if((((missiles[i].y < enemy[j].y) && (missiles[i].y > (enemy[j].y - enemy[j].height))) ||
 							// check vertical overlap (bottom)
-						 (((missiles[i].y - missiles[i].height) <= enemy[j].y) && ((missiles[i].y - missiles[i].height) >= (enemy[j].y - enemy[j].height)))) &&
+						 (((missiles[i].y - missiles[i].height) < enemy[j].y) && ((missiles[i].y - missiles[i].height) > (enemy[j].y - enemy[j].height)))) &&
 							// check horizontal overlap (right)
-							(((missiles[i].x >= enemy[j].x) && (missiles[i].x <= (enemy[j].x + enemy[j].width))) ||	
+							(((missiles[i].x > enemy[j].x) && (missiles[i].x < (enemy[j].x + enemy[j].width))) ||	
 							// check horizontal overlap (left)
-							 ((missiles[i].x + missiles[i].width >= enemy[j].x) && (missiles[i].x + missiles[i].width <= (enemy[j].x + enemy[j].width))))){
+							 ((missiles[i].x + missiles[i].width > enemy[j].x) && (missiles[i].x + missiles[i].width < (enemy[j].x + enemy[j].width))))){
 						enemy[j].status = dead;  		// update enemy sprite status to DEAD
 						enemyCollisionFlag[j] = 1;	// set collision flag
 						missiles[i].status = dead;	// update missile status to DEAD
@@ -305,17 +389,66 @@ void SysTick_Handler(void){ // every 16.67 ms
 					  sound_pointer = explosion1; //set current_sound to explosion
 						sound_length = 6964;				//set sound length
 						sound_index = 0;						//reset index
+					
+									
+					  explosion_frame = 0;
+					  explosion_counter = 1;
+						if(explosion_done == 0){		//if previous explosion is not done yet once another collosion occurs, set clear_explosion_early flag and save previous coordinates before overwriting
+							clear_explosion_early = 1;
+							x_save = explosion_anim[4].x;
+							y_save = explosion_anim[4].y;
+						}
+					  for(int i = 0; i < 5; i++){
+							explosion_anim[i].status = alive;
+							explosion_anim[i].x = (enemy[j].x - 2); //center explosion at middle of enemy sprite
+							explosion_anim[i].y = (enemy[j].y + 10);
+						}
+						
 					}
 				}
 			}
 		}
+	}//END OF COLLISION DETECTION------------------------------------------------------------------------------------------------------------------------------------------------------------
+	
+	
+	
+	//ENEMY MOVEMENT: MOVE EACH WAVE OF ENEMIES IN A ZIGZAG PATTERN (need to set flags if sprite touches walls)--------------------------------------------
+	for(int i = 0; i < 6; i++){
+		if(enemy[i].status == dead){}	//don't set any movement flags if dead
+		else{
+			move_enemy = 1; //set flag to move enemy one pixel
+			if(enemy[i].x == 110 && enemy[i].down_counter == 0){		//enemy has just touched right wall
+					enemy[i].right = 0;
+					enemy[i].down = 1;
+			}
+			else if(enemy[i].x == 110 && enemy[i].down_counter >= 10){		//enemy has moved down 10 units along the right wall and now needs to move left
+				enemy[i].down = 0;
+				enemy[i].left = 1;
+				enemy[i].down_counter = 0; //reset counter after done moving down
+			}
+			else if(enemy[i].x == 0 && enemy[i].down_counter == 0) {	//enemy has just reached left wall
+				enemy[i].left = 0;
+				enemy[i].down = 1;
+			}
+			else if(enemy[i].x == 0 && enemy[i].down_counter >= 10){ //enemy has moved 10 units along the left wall and now needs to move right
+				enemy[i].down = 0;
+				enemy[i].right = 1;
+				enemy[i].down_counter = 0; //reset counter after done moving down
+			}
+		
 	}
+}//check each enemy
+	
+
 }//END OF SYSTICK ISR--------------------------------------------------------------------------------------------------------------------------------
 
 
 
-//PERIODIC TASK FOR TIMER1 (CREATE SOUND EFFECTS USING DAC_OUT)
-//----------------------------------------------------------------
+//PERIODIC TASKS FOR TIMERS 
+//TIMER0 (animation counter for explosions)
+//TIMER1(CREATE SOUND EFFECTS USING DAC_OUT) 
+//TIMER2 (PROJECTILE MOVEMENT)
+//---------------------------------------------------------------------------------------------------------------------
 void playsound(void){
 	if(sound_pointer != silence){
 			if(sound_index < sound_length){
@@ -328,6 +461,24 @@ void playsound(void){
 			}
 	}
 	
+}
+
+void animation(void){
+	if(explosion_done == 0){
+		explosion_counter++; //increment counter every 125 ms
+	}
+}
+
+void move_projectiles(void) {
+	// check if player missile has reached top of screen, if not, set movemissileflag
+	  for(int i = 0; i < 2; i++){
+			if(missiles[i].y == 0){
+				missiles[i].status = dead;
+			}
+			else{
+				movemissileflag = 1;
+			}
+		}
 }
 
 
@@ -352,6 +503,15 @@ void missilesInit(void){									//at beginning of the game, both missiles have 
 		missiles[i].image = missile;
 		missiles[i].status = dead;
 	}
+}
+
+void explosionsInit(void){
+		for(int i = 0; i < 5; i++){
+			explosion_anim[i].width = 20;
+			explosion_anim[i].height = 20;
+			explosion_anim[i].image = explosion_animation[i];
+			explosion_anim[i].status = dead;
+		}
 }
 
 // COLLISION FLAG INITIALIZATION (TEST)
@@ -391,12 +551,18 @@ void Delay100ms(uint32_t count){uint32_t volatile time;
 // enemy movement testing/playground
 void testEnemyInit(void){uint8_t i;
 	for(i=0; i<6; i++){
-		enemy[i].x = 20*i;
+		enemy[i].x = 20*i + 1;
 		enemy[i].y = 10;
 		enemy[i].width = 16;
 		enemy[i].height = 10;
 		enemy[i].image = SmallEnemy10pointA;
 		enemy[i].status = alive;
+		
+		enemy[i].up = 0;
+		enemy[i].down = 0;
+		enemy[i].right = 1;
+		enemy[i].left = 0;
+		enemy[i].down_counter = 0;
 		ST7735_DrawBitmap(enemy[i].x, enemy[i].y, enemy[i].image, enemy[i].width, enemy[i].height);
 	}
 }
