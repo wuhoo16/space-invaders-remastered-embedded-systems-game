@@ -89,12 +89,16 @@ void missilesInit(void);
 void collisionFlag_Init(void);
 void explosionsInit(void);
 
-void wave1Init(void);
+void wave1Init(void); void wave2Init(void); void wave3Init(void); void wave4Init(void);
 void allwaves_statusInit(void);
 
 void playsound(void);	// function that outputs samples of sound arrays depending on global varables (based on current global flags of sound effect and length of sample array)
-void animation(void);
+void animation_spawn_delay(void); //periodic function that is called every 125 ms through the Timer0 ISR
 void move_projectiles(void);
+
+void reload_movement_cts(uint8_t speed);
+
+void init_txt_pts(void);
 //----------------------------------------------------------------------------------------------------
 
 
@@ -128,8 +132,8 @@ typedef struct enemy_sprite enemy_t;
 
 struct wave{
 	enemy_t enemy[4][4];					//4 rows of 4 enemy sprites each
-	uint8_t clear;								//1 for whole wave clear, otherwise 0
-	uint8_t row_clear[4]; 				//1 for whole row clear, 0 otherwise
+	uint8_t clear;								//2 for last sprite animation done, 1 for whole wave clear detected in ISR, otherwise 0
+	uint8_t row_clear[4]; 				//1 for whole row clear deteced in ISR, 0 otherwise
 	uint8_t row_spawn[4];
 };
 typedef struct wave wave_t;
@@ -161,7 +165,9 @@ uint8_t m1spawn = 0;
 uint8_t m2spawn = 0;
 uint8_t movemissileflag;
 uint8_t missileCollisionFlag[2] = {0,0};
+uint8_t firerate_limit_counter = 2;		//allow player to fire at the beginning of the game with no restrictions
 		//uint8_t enemyCollisionFlag[6] = {0,0,0,0,0,0};
+
 //sprites
 sprite_t player;
 sprite_t missiles[2];
@@ -189,6 +195,12 @@ uint8_t moveRight_ct[4] = {0,0,0,0};
 uint8_t moveLeft_ct[4] = {0,0,0,0};
 uint8_t moveDownR_ct[4] = {0,0,0,0};
 uint8_t moveDownL_ct[4] = {0,0,0,0};
+
+//text arrays and pointers
+char msg1pt[15] = {'W', 'A', 'V', 'E', ' ', '1', ' ', 'C', 'L', 'E', 'A', 'R', 'E', 'D', 0};
+char msg2pt[15] = {'W', 'A', 'V', 'E', ' ', '2', ' ', 'C', 'L', 'E', 'A', 'R', 'E', 'D', 0};
+char msg3pt[15] = {'W', 'A', 'V', 'E', ' ', '1', ' ', 'C', 'L', 'E', 'A', 'R', 'E', 'D', 0};
+char msg4pt[15] = {'W', 'A', 'V', 'E', ' ', '1', ' ', 'C', 'L', 'E', 'A', 'R', 'E', 'D', 0};
 //-----------------------------------------------------------------------
 
 
@@ -213,7 +225,10 @@ int main(void){
 	explosionsInit();
 	allwaves_statusInit();
 	wave1Init();
-	Timer0_Init(&animation, 10000000); 				//Timer0 interrupts at 8 Hz (every 125 ms) ALSO CONTROLS ROW SPAWN EVERY 500 ms)
+	wave2Init();
+	wave3Init();
+	wave4Init();
+	Timer0_Init(&animation_spawn_delay, 10000000); 				//Timer0 interrupts at 8 Hz (every 125 ms) ALSO CONTROLS ROW SPAWN EVERY 3 s)
 	playerInit();
 //  Delay100ms(2);
 	EnableInterrupts();
@@ -228,6 +243,7 @@ int main(void){
 			{
 					m1spawn = 0;					//clear flag
 					ST7735_DrawBitmap(missiles[0].x, missiles[0].y, missiles[0].image, missiles[0].width, missiles[0].height);
+				  firerate_limit_counter = 0;		//reset counter once missile has spawned
 				  sound_pointer = laser5;
 				  sound_length = 3600;
 			  	sound_index = 0;
@@ -236,6 +252,7 @@ int main(void){
 			if(m2spawn == 1){
 					m2spawn = 0;					//clear flag
 				  ST7735_DrawBitmap(missiles[1].x, missiles[1].y, missiles[1].image, missiles[1].width, missiles[1].height);
+				  firerate_limit_counter = 0;		//reset counter once missile has spawned
 				  sound_pointer = laser5;
 					sound_length = 3600;
 				  sound_index = 0;
@@ -297,35 +314,24 @@ int main(void){
 
 		//**** IF COLLISION FLAG ATTRIBUTE SET FOR ENEMY, DRAW OVER ENEMY AND DRAW FIRST FRAME OF EXPLOSION*******************************************************************************************
 					for(int i = 0; i < 4; i++){	//for each row
-						if(wave[wave_number].row_clear[i] == 0){	//skip checking ith row if row already cleared
 							for(int j = 0; j < 4; j++){//for each enemy
-								if(wave[wave_number].enemy[i][j].collision_flag == 1){
-									wave[wave_number].enemy[i][j].collision_flag = 0;		// acknowledge
-									ST7735_FillRect(wave[wave_number].enemy[i][j].x, wave[wave_number].enemy[i][j].y - wave[wave_number].enemy[i][j].height, wave[wave_number].enemy[i][j].width, wave[wave_number].enemy[i][j].height, 0x0000);
+								//if(wave[wave_number].enemy[i][j].status == dead){ //skip checking enemies that are unspawned or alive
+									if(wave[wave_number].enemy[i][j].collision_flag == 1){
+										wave[wave_number].enemy[i][j].collision_flag = 0;		// acknowledge
+										ST7735_FillRect(wave[wave_number].enemy[i][j].x, wave[wave_number].enemy[i][j].y - wave[wave_number].enemy[i][j].height, wave[wave_number].enemy[i][j].width, wave[wave_number].enemy[i][j].height, 0x0000);
 
-									//draw first frame of explosion
-									ST7735_DrawBitmap(explosion_anim[explosion_frame].x, explosion_anim[explosion_frame].y, explosion_anim[explosion_frame].image, explosion_anim[explosion_frame].width, explosion_anim[explosion_frame].height);					
-									explosion_counter = 0; //clear counter
-									explosion_done = 0;		//timer0 starts incrementing explosion_counter
-									explosion_frame++;
-								}
-							}
+										//draw first frame of explosion
+										ST7735_DrawBitmap(explosion_anim[explosion_frame].x, explosion_anim[explosion_frame].y, explosion_anim[explosion_frame].image, explosion_anim[explosion_frame].width, explosion_anim[explosion_frame].height);					
+										explosion_counter = 0; //clear counter
+										explosion_done = 0;		//timer0 starts incrementing explosion_counter in the animation/spawn_delay function
+										explosion_frame++;
+									}
+							//}checking if status is dead does same thing as checking if collision_flag is 1
 						}
 					}
 		//*************************************************************************************************************************************************************************************************
 			
 					
-		//**** DRAW NEW ENEMY POSITION *************************************************************************
-		for(int i = 0; i < 4; i++){
-					if(wave[wave_number].row_clear[i] == 0){	//only move ith row if the row has not been cleared
-						for(int j = 0; j < 4; j++){
-							if(wave[wave_number].enemy[i][j].status != dead && wave[wave_number].enemy[i][j].status != unspawned){// do nothing if enemy is dead
-								ST7735_DrawBitmap(wave[wave_number].enemy[i][j].x, wave[wave_number].enemy[i][j].y, wave[wave_number].enemy[i][j].image, wave[wave_number].enemy[i][j].width, wave[wave_number].enemy[i][j].height);
-							}
-						}
-					}
-		};// **************************************************************************************************
-
 
 
 	//**** EXPLOSION	ANIMATIONS (CHECKING FRAMES AND CLEARING EXPLOSIONS ONCE ANIMATION IS DONE) **************************************************************************************************************************************************
@@ -339,12 +345,71 @@ int main(void){
 				explosion_done = 1;
 				explosion_counter = 0;
 			  explosion_frame = 6;  //set to 6 until it is reset to 0 on the next collision
+				
+				//if(wave[wave_number].clear == 1){
+					//	wave[wave_number].clear = 2; //set to 2 once last enemy explosion animation is done
+				//}
 		}
 		if(clear_explosion_early == 1){						//clears a previous explosions BMP if another explosion happens to occur before the first is done animating (prevents previous image from staying forever)
 			clear_explosion_early = 0; //clear flag
 			ST7735_FillRect(x_save, y_save - explosion_anim[4].height, explosion_anim[4].width, explosion_anim[4].height, 0x0000);
+			
+			if(wave[wave_number].clear == 1){
+						wave[wave_number].clear = 2; //set to 2 once last enemy explosion animation is done
+				}
 		}
 		
+		
+		//**** DRAW NEW ENEMY POSITION *************************************************************************
+		for(int i = 0; i < 4; i++){
+					if(wave[wave_number].row_clear[i] == 0){	//only move ith row if the row has not been cleared
+						for(int j = 0; j < 4; j++){
+							if(wave[wave_number].enemy[i][j].status != dead && wave[wave_number].enemy[i][j].status != unspawned){// do nothing if enemy is dead
+								ST7735_DrawBitmap(wave[wave_number].enemy[i][j].x, wave[wave_number].enemy[i][j].y, wave[wave_number].enemy[i][j].image, wave[wave_number].enemy[i][j].width, wave[wave_number].enemy[i][j].height);
+							}
+						}
+					}
+		};// **************************************************************************************************
+
+
+		
+		
+			
+//ADD MESSAGES ABOUT WAVE CLEAR HERE OR SOME DELAY UNTIL NEXT WAVE SPAWNS**************************************************************************
+		if(wave[wave_number].clear == 1){ //set to 1 when deadcounter is 16, set to 2 when last enemy explosion ends
+			//ST7735_SetTextColor(0xFFFF); //set text color to white
+			//ST7735_SetCursor(26, 40);
+				switch(wave_number){
+		case 0:
+				ST7735_DrawString(5, 3, msg1pt, 0xFFFF);
+				break;
+		case 1:
+				ST7735_DrawString(5, 3, msg2pt, 0xFFFF);
+				break;
+		case 2:
+				ST7735_DrawString(5, 3, msg3pt, 0xFFFF);
+		
+				break;
+		case 3:
+				ST7735_DrawString(5, 3, msg4pt, 0xFFFF);
+				break;
+		default:
+				ST7735_OutString("FINAL BOSS.");
+				break;
+	}
+			
+		//ADD THIS IN LATER-- delay a few seconds, overwrite text on screen, then clear the wave_spawn_done flag and reset current_row_number to 0
+			Delay100ms(2); //POST ON PIAZZA IF WE CAN USE DELAYS IF WE ALREADY HAVE 4 INTERRUPTS (break between waves of enemies)
+			ST7735_FillRect(20, 21, 105, 21, 0x0000);  //clear text
+			current_row_number = 0;
+			wave_spawn_done = 0;
+			wave_number++;	//increment wave_number only if whole wave is dead
+			reload_movement_cts(wave[wave_number].enemy[0][0].speed);			//re-initialize the initial right movement counter for the next wave's next 4 rows
+		}
+//********************************************************************************************************************************************************
+		
+	
+			
 	//**** NEXT ROW SPAWN (every .5 s) ********************************
 		if(current_row_number == 4){
 			wave_spawn_done = 1; //set global flag
@@ -377,7 +442,7 @@ void SysTick_Handler(void){ // every 16.67 ms
 	
 	
 //**** BUTTON CHECKING: CHECK PORT E PIN 0 (PRIMARY FIRE BUTTON) TO DETERMINE MISSILE SPAWN (only 2 missiles allowed onscreen at a time)****
-		if(PE0 == 1){
+		if(PE0 == 1 && firerate_limit_counter >=2){ //only sets missile spawn flags if at least 250 ms has passed since the last missile was fired
 				SW0 = PE0;				// read data to clear Port E data
 				if(missiles[0].status == dead){// case for if 1st missile gone/offscreen
 					missiles[0].x = (player.x + player.width/2) - missiles[0].width/2;			// assign starting x pos of missile
@@ -389,7 +454,10 @@ void SysTick_Handler(void){ // every 16.67 ms
 					missiles[1].y = (player.y - player.height);															// assign starting y pos of missile	
 					m2spawn = 1;
 				}
-		}																											
+		}
+		else{
+			SW0 = PE0; //clear Port E data
+		}
 			
 	SW1 = PE1 >> 1;
 //*******************************************************************************************************************************************
@@ -446,7 +514,10 @@ void SysTick_Handler(void){ // every 16.67 ms
 						if(wave[wave_number].row_clear[i] == 0 && wave[wave_number].row_spawn[i] == 1){//skip movement decision if ith row is cleared or not spawned yet
 								if(moveRightInit_ct[i] > 0){// row of enemies initially moves 26 pixels to right right from center
 										for(int j=0; j < 4; j++){
-											wave[wave_number].enemy[i][j].x += (1*wave[wave_number].enemy[i][0].speed);
+												if(wave[wave_number].enemy[i][j].status == alive)	//only change position if the enemy is alive
+												{
+													wave[wave_number].enemy[i][j].x += (1*wave[wave_number].enemy[i][0].speed);
+												}
 										}
 										moveRightInit_ct[i]--;
 										if(moveRightInit_ct[i] == 0){// if max right position reached, set count to move down (on the right side)
@@ -483,11 +554,10 @@ void SysTick_Handler(void){ // every 16.67 ms
 									}
 								}
 					}//*******************************************************************************************************************
-		
-	
 
-//**** Update row clear attributes and wave clear attributes (depending on current wave #) AND INCREMENT WAVE_NUMBER IF CLEAR FLAG IS SET*****************************************************************************************************
-
+					
+					
+//**** Update row clear attributes and wave clear attributes after enemies have been written over(depending on current wave #) AND INCREMENT WAVE_NUMBER IF CLEAR FLAG IS SET*******
 			for(int i=0; i<4; i++){ //iterate for each row
 					for(int j=0; j<4; j++){ //iterate for each enemy
 							if(wave[wave_number].enemy[i][j].status == dead){
@@ -504,12 +574,11 @@ void SysTick_Handler(void){ // every 16.67 ms
 			
 			if(totaldeadcounter == 16){	//check if whole wave is dead
 					wave[wave_number].clear = 1;							//set attribute flag if whole wave clear
-					wave_number++;	//increment wave_number only if whole wave is dead
+					//wave_number++;	//increment wave_number only if whole wave is dead
 			}
 			totaldeadcounter = 0;		//reset counter
+//**********************************************************************************************************************************************************************************
 
-
-//****************************************************************************************************************
 }//END OF SYSTICK ISR------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 
@@ -533,10 +602,12 @@ void playsound(void){
 	
 }
 
-void animation(void){
+void animation_spawn_delay(void){
 	if(explosion_done == 0){
 		explosion_counter++; // increment counter every 125 ms
 	}
+	
+	firerate_limit_counter++; //increment counter every 125 ms
 	
 	if(wave_spawn_done == 1){//if last row has been spawned, don't increment counter
 		counter_125ms = 0; //keep counter at 0 until next wave spawns (MAKE SURE TO CLEAR WAVE SPAWN DONE FLAG UPON THE SPAWN OF THE FIRST ROW OF NEXT WAVE)										
@@ -640,23 +711,71 @@ void wave1Init(void){	//intializing each wave separately in case we want differe
 			wave[0].enemy[i][j].width = 16;
 			wave[0].enemy[i][j].height = 10;
 			wave[0].enemy[i][j].image = SmallEnemy10pointA;
+			wave[0].enemy[i][j].speed = 1;
+			wave[0].enemy[i][j].collision_flag = 0;
 			if(i == 0){//only first row should be alive at the beginning
+				ST7735_DrawBitmap(wave[0].enemy[i][j].x, wave[0].enemy[i][j].y, wave[0].enemy[i][j].image, wave[0].enemy[i][j].width, wave[0].enemy[i][j].height);
 				wave[0].enemy[i][j].status = alive;
+				wave[0].row_spawn[0] = 1; //first row spawned
+				current_row_number = 1;
 			}
 			else{
 				wave[0].enemy[i][j].status = unspawned;
 			}
-			wave[0].enemy[i][j].speed = 1;
-			wave[0].enemy[i][j].collision_flag = 0;
-			
-			if(i == 0){//only draw first row
-					ST7735_DrawBitmap(wave[0].enemy[i][j].x, wave[0].enemy[i][j].y, wave[0].enemy[i][j].image, wave[0].enemy[i][j].width, wave[0].enemy[i][j].height);
-					wave[0].row_spawn[0] = 1; //first row spawned
-					current_row_number = 1;
-			}
+		}
+		if(i != 0) {
+			wave[0].row_spawn[i] = 0;	//all other rows have not been spawned
 		}
 	}
 }
+void wave2Init(void){	//intializing each wave separately in case we want different dimensions, images, and speeds for other waves!!!
+	for(int i=0; i<4; i++){ //for each row of enemies
+		for(int j=0; j<4; j++){ //for each enemy sprite
+			wave[1].enemy[i][j].x = 20*j + 26;
+			wave[1].enemy[i][j].y = 10;
+			wave[1].enemy[i][j].width = 16;
+			wave[1].enemy[i][j].height = 10;
+			wave[1].enemy[i][j].image = wave2enemy;
+			wave[1].enemy[i][j].status = unspawned;
+			wave[1].enemy[i][j].speed = 2;
+			wave[1].enemy[i][j].collision_flag = 0;
+		}
+		wave[1].row_spawn[i] = 0;	//all rows have not been spawned
+	}
+}
+
+void wave3Init(void){	//intializing each wave separately in case we want different dimensions, images, and speeds for other waves!!!
+	for(int i=0; i<4; i++){ //for each row of enemies
+		for(int j=0; j<4; j++){ //for each enemy sprite
+			wave[2].enemy[i][j].x = 20*j + 26;
+			wave[2].enemy[i][j].y = 10;
+			wave[2].enemy[i][j].width = 16;
+			wave[2].enemy[i][j].height = 10;
+			wave[2].enemy[i][j].image = wave3enemy;
+			wave[2].enemy[i][j].status = unspawned;
+			wave[2].enemy[i][j].speed = 1;
+			wave[2].enemy[i][j].collision_flag = 0;
+		}
+		wave[2].row_spawn[i] = 0;	//all rows have not been spawned
+	}
+}
+
+void wave4Init(void){	//intializing each wave separately in case we want different dimensions, images, and speeds for other waves!!!
+	for(int i=0; i<4; i++){ //for each row of enemies
+		for(int j=0; j<4; j++){ //for each enemy sprite
+			wave[3].enemy[i][j].x = 20*j + 26;
+			wave[3].enemy[i][j].y = 16;
+			wave[3].enemy[i][j].width = 20;
+			wave[3].enemy[i][j].height = 16;
+			wave[3].enemy[i][j].image = wave4enemy;
+			wave[3].enemy[i][j].status = unspawned;
+			wave[3].enemy[i][j].speed = 2;
+			wave[3].enemy[i][j].collision_flag = 0;
+		}
+		wave[3].row_spawn[i] = 0;	//all rows have not been spawned
+	}
+}
+
 
 void allwaves_statusInit(void){
 	for(int i = 0; i < 4; i++){
@@ -681,7 +800,17 @@ void moveEnemyLeft(uint8_t wave_num, uint8_t row_num, uint8_t speed){
 }
 void moveEnemyDown(uint8_t wave_num, uint8_t row_num, uint8_t speed){
 	for(int i=0; i<4; i++){
-		wave[wave_num].enemy[row_num][i].y += 1;
+		wave[wave_num].enemy[row_num][i].y += (1 * wave[wave_num].enemy[row_num][i].speed);
 	}
-}//---------------------------------------------------------------------------------------------------------------------
+}
 
+
+void reload_movement_cts(uint8_t speed){
+	for(int i=0; i<4; i++){
+		moveRightInit_ct[i] = (26/speed);
+		moveDownR_ct[i] = 0;
+		moveDownL_ct[i] = 0;
+		moveRight_ct[i] = 0;
+		moveLeft_ct[i] = 0;
+	}
+}
