@@ -92,7 +92,7 @@ void explosionsInit(void);
 void wave1Init(void); void wave2Init(void); void wave3Init(void); void wave4Init(void);
 void allwaves_statusInit(void);
 
-void playsound(void);	// function that outputs samples of sound arrays depending on global varables (based on current global flags of sound effect and length of sample array)
+//void playsound(void);	// function that outputs samples of sound arrays depending on global varables (based on current global flags of sound effect and length of sample array)
 void animation_spawn_delay(void); //periodic function that is called every 125 ms through the Timer0 ISR
 void move_projectiles(void);
 
@@ -176,7 +176,7 @@ sprite_t explosion_anim[5];
 wave_t wave[4];						 //4 wave structs; wave[0] refers to first wave, wave[1] is second wave... (EACH WAVE STRUCT CONTAINS A 2D ARRAY OF 4 ROWS OF 4 ENEMIES)
 
 //sound global variable flags
-const unsigned char *sound_pointer = silence; 
+//const unsigned char *sound_pointer = silence; 
 uint32_t sound_length;						//size of current sample array
 uint32_t sound_index = 0;
 
@@ -215,7 +215,7 @@ int main(void){
 	DAC_Init();
 	PortE_Init();
 	SysTick_Init();
-	Timer1_Init(&playsound, 7256);						// Timer1 interrupts at 11.025 kHZ (reload value needed is 7256.24)
+//	Timer1_Init(&playsound, 7256);						// Timer1 interrupts at 11.025 kHZ (reload value needed is 7256.24)
 	Timer2_Init(&move_projectiles, 1000000); 	//Timer2 interrupts at 80 Hz (all projectile movement)
   ST7735_FillScreen(0x0000);								// set screen to black
   
@@ -243,19 +243,23 @@ int main(void){
 			{
 					m1spawn = 0;					//clear flag
 					ST7735_DrawBitmap(missiles[0].x, missiles[0].y, missiles[0].image, missiles[0].width, missiles[0].height);
-				  firerate_limit_counter = 0;		//reset counter once missile has spawned
-				  sound_pointer = laser5;
+					firerate_limit_counter = 0;		//reset counter once missile has spawned
+/*				 
+					sound_pointer = laser5;
 				  sound_length = 3600;
 			  	sound_index = 0;
+*/
 					missiles[0].status = moving;
 			}
 			if(m2spawn == 1){
 					m2spawn = 0;					//clear flag
 				  ST7735_DrawBitmap(missiles[1].x, missiles[1].y, missiles[1].image, missiles[1].width, missiles[1].height);
 				  firerate_limit_counter = 0;		//reset counter once missile has spawned
+/*
 				  sound_pointer = laser5;
 					sound_length = 3600;
 				  sound_index = 0;
+*/
 					missiles[1].status = moving;
 			}//******************************************************************************************************************
 			
@@ -483,11 +487,11 @@ void SysTick_Handler(void){ // every 16.67 ms
 												wave[wave_number].enemy[k][j].collision_flag = 1;	// set collision flag
 												missiles[i].status = dead;	// update missile status to DEAD
 												missileCollisionFlag[i] = 1;// set collision flag
-					
+/* NO SOUND					
 												sound_pointer = explosion1; //set current_sound to explosion
 												sound_length = 6964;				//set sound length
 												sound_index = 0;						//reset index
-							
+*/							
 												explosion_frame = 0;
 												explosion_counter = 1;
 												if(explosion_done == 0){		//if previous explosion is not done yet once another collosion occurs, set clear_explosion_early flag and save previous coordinates before overwriting
@@ -588,6 +592,7 @@ void SysTick_Handler(void){ // every 16.67 ms
 //TIMER1(CREATE SOUND EFFECTS USING DAC_OUT) 
 //TIMER2 (PROJECTILE MOVEMENT)
 //---------------------------------------------------------------------------------------------------------------------
+/* NO SOUND
 void playsound(void){
 	if(sound_pointer != silence){
 			if(sound_index < sound_length){
@@ -601,7 +606,7 @@ void playsound(void){
 	}
 	
 }
-
+*/
 void animation_spawn_delay(void){
 	if(explosion_done == 0){
 		explosion_counter++; // increment counter every 125 ms
@@ -710,7 +715,15 @@ void wave1Init(void){	//intializing each wave separately in case we want differe
 			wave[0].enemy[i][j].y = 10;
 			wave[0].enemy[i][j].width = 16;
 			wave[0].enemy[i][j].height = 10;
-			wave[0].enemy[i][j].image = SmallEnemy10pointA;
+			if(i == 0){				// first row
+				wave[0].enemy[i][j].image = SmallEnemy10pointA;
+			}else if(i == 1){ // second row
+				wave[0].enemy[i][j].image = SmallEnemy10pointB;
+			}else if(i == 2){ // third row
+				wave[0].enemy[i][j].image = SmallEnemy20pointA;
+			}else if(i == 3){
+				wave[0].enemy[i][j].image = SmallEnemy20pointB;
+			}
 			wave[0].enemy[i][j].speed = 1;
 			wave[0].enemy[i][j].collision_flag = 0;
 			if(i == 0){//only first row should be alive at the beginning
