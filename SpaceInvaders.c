@@ -218,8 +218,9 @@ char msg2pt[15] = {'W', 'A', 'V', 'E', ' ', '2', ' ', 'C', 'L', 'E', 'A', 'R', '
 char msg3pt[15] = {'W', 'A', 'V', 'E', ' ', '3', ' ', 'C', 'L', 'E', 'A', 'R', 'E', 'D', 0};
 char msg4pt[15] = {'W', 'A', 'V', 'E', ' ', '4', ' ', 'C', 'L', 'E', 'A', 'R', 'E', 'D', 0};
 char msg5pt[15] = {'F', 'I', 'N', 'A', 'L', ' ', 'B', 'O', 'S' , 'S', 0};
-char msg_gameOver[] = {'G', 'A', 'M', 'E', ' ', 'O', 'V', 'E', 'R', ' ', 'E', 'A', 'R', 'T', 'H', 'L', 'I', 'N', 'G', 0};
-char msg_finalscore[] = {'F', 'I', 'N', 'A', 'L', ' ', 'S', 'C', 'O', 'R', 'E', ':', ' ', 0};
+char msg_gameOver_line1[] = {'G', 'A', 'M', 'E', ' ', 'O', 'V', 'E', 'R', ' ', 'S', 'T', 'U', 'D', 'E', 'N', 'T', '.', 0}; // 18 characters long (offset x column by 1)
+char msg_gameOver_line2[] ={'Y', 'O', 'U', ' ', 'F', 'A', 'I', 'L', 'E', 'D', ' ', 'E', 'E', '3', '1', '9', 'K', '.', 0}; // 18 characters long (offset by 1 as well)
+char msg_finalscore[] = {'F', 'I', 'N', 'A', 'L', ' ', 'S', 'C', 'O', 'R', 'E', ':', ' ', 0}; // 13 chars plus 4 chars for score = 17 chars (offset by 1)
 
 //ANDY'S GAME OVER IDEA GLOBAL VARIABLES
 uint8_t collided_enemy_i = 0;
@@ -1172,7 +1173,8 @@ void gameOver(void){
 	*/
 	
 	ST7735_FillScreen(0x0000);
-	ST7735_DrawString(1, 7, msg_gameOver, 0xFFFF);
+	ST7735_DrawString(2, 6, msg_gameOver_line1, 0xFFFF);
+	ST7735_DrawString(2, 7, msg_gameOver_line2, 0xFFFF);
 	ST7735_DrawString(2, 8, msg_finalscore, 0xFFFF);
 	for(int i = 3; i >= 0; i--){ //convert 4 digit integer score to char array scorept
 			scorept[i] = ((total_score % 10) + 0x30);	// integer score value is converted to a character array of 4 digits and a null sentinel
