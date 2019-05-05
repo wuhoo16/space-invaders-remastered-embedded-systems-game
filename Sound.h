@@ -9,6 +9,9 @@
 extern const unsigned char silence[1];
 extern const unsigned char laser5[3600];
 extern const unsigned char explosion1[6964];
+extern const unsigned char enemyoof[2770];
+extern const unsigned char playerdeathaudio[28154]; // about 2.5 secs
+extern const unsigned char dramaticexplosion[59108]; // about 5.35 seconds 
 
 void Sound_Init(void);
 void Sound_Play(const uint8_t *pt, uint32_t count);
