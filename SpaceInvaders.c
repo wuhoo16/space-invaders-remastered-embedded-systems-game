@@ -94,7 +94,7 @@ void allwaves_statusInit(void);
 
 void playsound(void);	// function that outputs samples of sound arrays depending on global varables (based on current global flags of sound effect and length of sample array)
 void animation_spawn_delay(void); //periodic function that is called every 125 ms through the Timer0 ISR
-void move_projectiles(void);
+void missile_move(void);
 
 void reload_movement_cts(uint8_t i, uint8_t j); // updated to reload every value of the movement 2D arrays
 
@@ -241,8 +241,8 @@ int main(void){
 	DAC_Init();
 	PortE_Init();
 	SysTick_Init();
-	Timer1_Init(&playsound, 7256);						// Timer1 interrupts at 11.025 kHZ (reload value needed is 7256.24)
-	Timer2_Init(&move_projectiles, 1000000); 	//Timer2 interrupts at 80 Hz (all projectile movement)
+	Timer1_Init(&playsound, 7256);						// Timer1 interrupts at 11.025 kHZ (period value needed is 7256.24) // for 44.1 kHz --> (period value is 1814.05) butWC script is only 11.025 samples
+	Timer2_Init(&missile_move, 1000000); 			//Timer2 interrupts at 80 Hz (player primary fire... missiles travel 1 pixel per 12.5 ms = 80 pixels per second)
   ST7735_FillScreen(0x0000);								// set screen to black
   
 	  //ST7735_DrawBitmap(53, 141, Bunker0, 18,5); //no bunker in our game
@@ -272,7 +272,7 @@ int main(void){
 			disable_player_controls = 1; // SET DIABLE FLAG TO 1 SINCE NOW PLAYER SHOULDN'T BE ABLE TO DO ANYTHING
 			//DisableInterrupts(); //prevent all interrupts DON'T USE THIS SINCE WE STILL NEED TIMER0 INTERRUPTS FOR ANIMATIONS AND TIMER1 FOR SOUND
 			sound_pointer = playerdeathaudio; // set sound effect to player game over jingle
-			sound_length = 28154;
+			sound_length = 23748;
 			sound_index = 0;
 			for(int i = 0; i < 4; i++){ //flash player and colliding enemy 4 times
 				Delay100ms(5); // delay 500 ms
@@ -297,7 +297,7 @@ int main(void){
 					//draw first frame of explosion
 						ST7735_DrawBitmap(explosion_anim[explosion_frame].x, explosion_anim[explosion_frame].y, explosion_anim[explosion_frame].image, explosion_anim[explosion_frame].width, explosion_anim[explosion_frame].height);					
 						sound_pointer = dramaticexplosion; // replace animation with bigger, more dramatic explosion with more frames, and more detail (10 frames?)
-						sound_length = 59108; // edit length to match new sound array size
+						sound_length = 33248; // edit length to match new sound array size
 						sound_index = 0;
 			
 						explosion_counter = 0; //clear counter
@@ -321,16 +321,17 @@ int main(void){
 										ST7735_FillRect(x_save, y_save - explosion_anim[4].height + 1, explosion_anim[4].width, explosion_anim[4].height, 0x0000);
 								}
 						}
+						ST7735_FillScreen(0x0000); // clear screen to all black since explosion animation is done
 						while(sound_pointer != silence){ //busy-wait until big explosion sound is done playing and animation is over to move on to final game over screen
 						}
-						//gameOver_flag = 2;
-						gameOver();
-						return 0;				
+						gameOver_flag = 2; // set game over flag to 2 once dramatic explosion is done playing
+							//gameOver();
+							//return 0;				
 		}
-		//if(gameOver_flag == 2){
-			//gameOver();
-			//return 0;
-		//}
+		if(gameOver_flag == 2){
+			gameOver();
+			return 0;
+		}
 // ******************************
 		
 		
@@ -604,13 +605,13 @@ void SysTick_Handler(void){ // every 16.67 ms
 				}
 			}
 		}
-		else{ //check for previous explosions that need clearing if about to play final dramatic explosion // CAN TAKE OUT ONCE NEW 10 FRAME EXPLOSION IS ADDED
-			if(explosion_done == 0){		//if previous explosion is not done yet once another collosion occurs, set clear_explosion_early flag and save previous coordinates before overwriting
-					clear_explosion_early = 1;
-					x_save = explosion_anim[4].x;
-					y_save = explosion_anim[4].y;
-			}
-		}
+		//else{ //check for previous explosions that need clearing if about to play final dramatic explosion // CAN TAKE OUT ONCE NEW 10 FRAME EXPLOSION IS ADDED
+			//if(explosion_done == 0){		//if previous explosion is not done yet once another collosion occurs, set clear_explosion_early flag and save previous coordinates before overwriting
+					//clear_explosion_early = 1;
+					//x_save = explosion_anim[4].x;
+					//y_save = explosion_anim[4].y;
+			//}
+		//}
 	
 //**** BUTTON CHECKING: CHECK PORT E PIN 0 (PRIMARY FIRE BUTTON) TO DETERMINE MISSILE SPAWN******************************************************************************
 //**** PLAYER MISSILE FIRE LIMITS: only 2 missiles allowed onscreen at a time, 250 ms delay between shots, missile images can never overlap (minimum of 5 pixels apart)
@@ -696,14 +697,14 @@ void SysTick_Handler(void){ // every 16.67 ms
 												explosion_anim[i].x = (wave[wave_number].enemy[k][j].x - 2); //center explosion at middle of enemy sprite
 												explosion_anim[i].y = (wave[wave_number].enemy[k][j].y + 10);
 											}	
-										sound_pointer = explosion1; //set current_sound to explosion only if enemy health becomes 0
-										sound_length = 6964;				//set sound length
+										sound_pointer = explosion1; //set current_sound to explosion only if enemy health becomes 0 (replace w explosion1 if new sound doesn't fit animiation)
+										sound_length = 6963;				//set sound length (<-- change to 6964 if using explosion 1)
 										sound_index = 0;						//reset index
 											
 										}//end of if-statement for health == 0
 										else{	// different sound effect if enemy health not reduced to 0
 											sound_pointer = enemyoof;	
-											sound_length = 2770;
+											sound_length = 2672;
 											sound_index = 0;
 										}
 										missiles[i].status = dying;	// update missile status to DYING NOT DEAD
@@ -726,7 +727,7 @@ void SysTick_Handler(void){ // every 16.67 ms
 						for(int j = 0; j<4; j++){ // check each enemy in the ith row
 								if(wave[wave_number].enemy[i][j].status == alive){ // only move enemies that are alive
 										if(moveRightInit_ct[i][j] > 0){// row of enemies initially moves 26 pixels to right right from center
-														if(wave[wave_number].enemy[i][j].image == enemy_steppermotor){
+														if(wave[wave_number].enemy[i][j].image == enemy_keil){
 															wave[wave_number].enemy[i][j].x += 2; // motor enemies move 2 pixels right(faster speed)
 														}
 														else
@@ -825,17 +826,21 @@ void playsound(void){
 						sound_index = sound_index_save;
 						if(sound_index >= sound_length) //if interrupted sound effect happened to finish during the laser5 sound, then just set sound_pointer to silence and index back to 0
 						{
-									sound_pointer = silence;
-									sound_index = 0;
+									if(sound_pointer == game_over_screen){
+										sound_index = 0;
+									}
+									else{
+										sound_pointer = silence;
+									}
+									//sound_index = 0; // sound index is set manually before pointer is reloaded
 						}
 					}
 					else{
 						sound_pointer = silence;
-						sound_index = 0;			// reset index once the sound is done playing
+						//sound_index = 0;			// if silence is the sound_pointer, then playsound has no work to do
 					}					
 			}
 	}
-	
 }
 
 void animation_spawn_delay(void){
@@ -854,7 +859,7 @@ void animation_spawn_delay(void){
 }
 
 
-void move_projectiles(void) {
+void missile_move(void) { // fires primary missile at 80 HZ (moves 1 pixel every 12.5 ms)
 	// check if player missile has reached top of screen, if not, set movemissileflag
 	  for(int i = 0; i < 2; i++){
 			if(missiles[i].y == 0){
@@ -998,13 +1003,13 @@ void wave1Init(void){	//intializing each wave separately in case we want differe
 			wave[1].enemy[i][j].collision_flag = 0;
 			
 					if(i == 0){				// first row
-						wave[1].enemy[i][j].image = enemy_steppermotor;
+						wave[1].enemy[i][j].image = enemy_keil;
 						wave[1].enemy[i][j].speed = 2;
 						wave[1].enemy[i][j].health = 1;
 						wave[1].enemy[i][j].score = 20;
 					}
 					else if(i == 1){ // second row
-						wave[1].enemy[i][j].image = enemy_steppermotor;
+						wave[1].enemy[i][j].image = enemy_keil;
 						wave[1].enemy[i][j].speed = 2;
 						wave[1].enemy[i][j].health = 1;
 						wave[1].enemy[i][j].score = 20;
@@ -1039,7 +1044,7 @@ void wave2Init(void){	//intializing each wave separately in case we want differe
 			wave[2].enemy[i][j].collision_flag = 0;
 			
 					if(i == 0){				// first row
-						wave[2].enemy[i][j].image = enemy_steppermotor;
+						wave[2].enemy[i][j].image = enemy_keil;
 						wave[2].enemy[i][j].speed = 2;
 						wave[2].enemy[i][j].health = 1;
 						wave[2].enemy[i][j].score = 20;
@@ -1125,7 +1130,7 @@ void allwaves_statusInit(void){
 }
 
 void moveEnemyRight(uint8_t wave_num, uint8_t row_num, uint8_t enemy_num){
-			if(wave[wave_num].enemy[row_num][enemy_num].image == enemy_steppermotor){
+			if(wave[wave_num].enemy[row_num][enemy_num].image == enemy_keil){
 					wave[wave_num].enemy[row_num][enemy_num].x += 2;
 			}
 			else{
@@ -1133,7 +1138,7 @@ void moveEnemyRight(uint8_t wave_num, uint8_t row_num, uint8_t enemy_num){
 			}
 }
 void moveEnemyLeft(uint8_t wave_num, uint8_t row_num, uint8_t enemy_num){
-			if(wave[wave_num].enemy[row_num][enemy_num].image == enemy_steppermotor){
+			if(wave[wave_num].enemy[row_num][enemy_num].image == enemy_keil){
 					wave[wave_num].enemy[row_num][enemy_num].x -= 2;
 			}
 			else{
@@ -1159,18 +1164,20 @@ void reload_movement_cts(uint8_t i, uint8_t j){
 }
 
 void gameOver(void){
-	DisableInterrupts();
-	//disable_player_controls = 1; // set to 1 again to be safe
-	//ONLY NEED TIMER1 NOW TO PLAY MUSIC DURING THE GAME OVER SCREEN (NOT WORKING RIGHT NOW)
-	//NVIC_ST_CTRL_R = 0x0000; // disable all SysTick Interrupts
-	//TIMER0_CTL_R = 0x00000000;    // disable timer0
-	//TIMER2_CTL_R = 0x00000000;    // disable timer2
+	//DisableInterrupts();
+	disable_player_controls = 1; // set to 1 again to be safe
 	
-	/* ending screen music not working as of now
+	//ONLY NEED TIMER1 INTERRUPTS NOW TO PLAY MUSIC DURING THE GAME OVER SCREEN (NOT WORKING RIGHT NOW)
+		NVIC_ST_CTRL_R = 0x0000; // disable all SysTick Interrupts
+		TIMER0_CTL_R = 0x00000000;    // disable timer0
+	  TIMER0_IMR_R = 0x00000000;    // disable timeout interrupt for timer0 that controls animation counters and spawn counters
+		TIMER2_CTL_R = 0x00000000;    // disable timer2
+		TIMER2_IMR_R = 0x00000000;    // disable timeout interrupt for timer2 that controls player primary fire missile speed
+	
+	// ending screen music not working as of now
 		sound_pointer = game_over_screen;
-		sound_length = 121157;
+		sound_length = 115456; // check if there is enough storage for 11 sec song clip
 		sound_index= 0;
-	*/
 	
 	ST7735_FillScreen(0x0000);
 	ST7735_DrawString(2, 6, msg_gameOver_line1, 0xFFFF);
@@ -1182,4 +1189,5 @@ void gameOver(void){
 	}
 	scorept[4] = 0; // null terminate the last element in the scorept char array
 	ST7735_DrawString(15, 8, scorept, 0xFFFF);
+	while(sound_pointer == game_over_screen){} //stay in this loop forever to keep playing music and freeze text
 }
