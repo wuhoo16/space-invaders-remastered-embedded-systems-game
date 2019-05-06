@@ -86,6 +86,7 @@ void moveEnemyDown(uint8_t wave_num, uint8_t row_num, uint8_t enemy_num); // Dow
 void SysTick_Init(void);
 void playerInit(void);
 void missilesInit(void);
+void powerupInit(void);
 void collisionFlag_Init(void);
 void explosionsInit(void);
 
@@ -107,6 +108,9 @@ void gameOver(void);
 //---------------------------------------------------------------------
 enum state{alive, moving, dead, dying, unspawned};
 typedef enum state status_t;		// status_t for states
+
+enum secondary{unequipped, led, laser, waveclear};
+typedef enum secondary secondary_t;
 
 struct sprite{
 	int16_t x;
@@ -175,9 +179,15 @@ uint8_t missileCollisionFlag[2] = {0,0};
 uint8_t firerate_limit_counter = 2;		//allow player to fire at the beginning of the game with no restrictions
 		//uint8_t enemyCollisionFlag[6] = {0,0,0,0,0,0};
 
+// powerup global variables
+uint8_t powerupIdx = 0;		// selects which powerup to spawn
+uint8_t powerupSpawn = 0; // flag set once powerup has spawned (1 per wave)
+
 //sprites
 sprite_t player;
 sprite_t missiles[2];
+secondary_t upgrade = unequipped; 
+sprite_t powerup[4];
 //enemy_t enemy[4];
 sprite_t explosion_anim[5];
 wave_t wave[4];						 //4 wave structs; wave[0] refers to first wave, wave[1] is second wave... (EACH WAVE STRUCT CONTAINS A 2D ARRAY OF 4 ROWS OF 4 ENEMIES)
@@ -234,6 +244,7 @@ uint8_t disable_player_controls = 0;
 //MAIN STARTS HERE==============================================================================================================================================================================================
 //===================================================================================================================================================================================================
 int main(void){
+	DisableInterrupts();
   PLL_Init(Bus80MHz); // Bus clock is 80 MHz 
   Random_Init(1);
   Output_Init();
@@ -247,6 +258,7 @@ int main(void){
   
 	  //ST7735_DrawBitmap(53, 141, Bunker0, 18,5); //no bunker in our game
 	missilesInit();
+	powerupInit();
 	collisionFlag_Init();
 	explosionsInit();
 	allwaves_statusInit();
@@ -455,7 +467,15 @@ int main(void){
 						}
 				}
 		}
-		
+
+		//**** UPDATE POWERUP POSITION****
+		if((powerup[powerupIdx].status == alive) && (powerup[powerupIdx].x + powerup[powerupIdx].width != 0)){// if power-up has reached left side, kill it
+			ST7735_DrawBitmap(powerup[powerupIdx].x, powerup[powerupIdx].y, powerup[powerupIdx].image, powerup[powerupIdx].width, powerup[powerupIdx].height);
+		}else if(powerup[powerupIdx].status == dying){
+				ST7735_FillRect(powerup[powerupIdx].x, powerup[powerupIdx].y - powerup[powerupIdx].height + 1, powerup[powerupIdx].width, powerup[powerupIdx].height, 0x0000);
+				powerup[powerupIdx].status = dead;
+		}
+
 		
 		//**** DRAW NEW ENEMY POSITION *************************************************************************
 		//KEEP THIS REGARDLESS OF DISABLE_PLAYER_CONTROLS FLAG VALUE
@@ -503,7 +523,9 @@ int main(void){
 			ST7735_FillRect(19, 20, 107, 21, 0x0000);  //clear text
 			current_row_number = 0;
 			wave_spawn_done = 0;
-			wave_number++;	//increment wave_number only if whole wave is dead
+			wave_number++;			//increment wave_number only if whole wave is dead
+				powerupSpawn = 0;	// clear powerup spawn flag
+			powerupIdx += 1; 		// increment powerup index for next wave
 			for(int i=0; i<4; i++){
 				for(int j=0; j<4; j++){
 					reload_movement_cts(i,j);			//re-initialize the movement counters for the next wave
@@ -719,10 +741,56 @@ void SysTick_Handler(void){ // every 16.67 ms
 				}
 			}//end of collision detection**************************************************************************************************************************************************************************
 		}// end of disable player control flag if-check
-				
+	
+//**** POWERUP-MISSILE COLLISION DETECTION
+	if(disable_player_controls != 1){ // no need to check for collision if player already died
+		for(int i = 0; i < 2; i++){
+			if(powerup[powerupIdx].status == alive){	// skip collision detection if enemy is dead
+				// check vertical overlap (top)
+				if((((missiles[i].y < powerup[powerupIdx].y) && (missiles[i].y > (powerup[powerupIdx].y - powerup[powerupIdx].height))) ||
+				// check vertical overlap (bottom)
+				(((missiles[i].y - missiles[i].height) < powerup[powerupIdx].y) && ((missiles[i].y - missiles[i].height) > (powerup[powerupIdx].y - powerup[powerupIdx].height)))) &&
+				// check horizontal overlap (right)
+				(((missiles[i].x > powerup[powerupIdx].x) && (missiles[i].x < (powerup[powerupIdx].x + powerup[powerupIdx].width))) ||	
+				// check horizontal overlap (left)
+				((missiles[i].x + missiles[i].width > powerup[powerupIdx].x) && (missiles[i].x + missiles[i].width < (powerup[powerupIdx].x + powerup[powerupIdx].width))))){
+					powerup[powerupIdx].status = dying;
+					if(powerup[powerupIdx].image == power_LED){
+						upgrade = led;
+					}else if(powerup[powerupIdx].image == power_laser){
+						upgrade = laser;
+					}else if(powerup[powerupIdx].image == power_waveClear){
+						upgrade = waveclear;
+					}
+					missiles[i].status = dying;	// update missile status to DYING NOT DEAD
+					missileCollisionFlag[i] = 1;// set collision flag
+				}
+
+			}//end of if-statement for collision check on all 4 sides
+		}
+	}
+
+//**** POWERUP MOVEMENT ****
+	// powerup spawn
+	if(powerupSpawn == 0){// if powerup has not yet spawned
+		powerup[powerupIdx].status = alive;
+		powerupSpawn = 1;	// set flag
+	}
+	// update powerup position
+	if(powerup[powerupIdx].status == alive){
+		if(powerup[powerupIdx].x + powerup[powerupIdx].width == 0){// if power-up has reached left side, kill it
+			powerup[powerupIdx].status = dead;
+		}else{
+			powerup[powerupIdx].x -=1;	// else, move power-up left
+		}
+
+	}	
+
+		
 //**** ENEMY MOVEMENT DECISIONS **************************************************************************************************************************
 // MOVE ENEMIES REGARDLESS OF DISABLE_PLAYER_CONTROLS FLAG VALUE
 		for(int i = 0; i < 4; i++){ // check each row
+			// enemy wave movement
 				if(wave[wave_number].row_clear[i] == 0 && wave[wave_number].row_spawn[i] == 1){//skip movement decision if ith row is cleared or not spawned yet
 						for(int j = 0; j<4; j++){ // check each enemy in the ith row
 								if(wave[wave_number].enemy[i][j].status == alive){ // only move enemies that are alive
@@ -892,6 +960,25 @@ void missilesInit(void){// at beginning of the game, both missiles have not been
 		missiles[i].height = 10;
 		missiles[i].image = missile;
 		missiles[i].status = dead;
+	}
+}
+
+void powerupInit(void){
+	for(int i = 0; i < 4; i++){
+		powerup[i].x = 111;
+		powerup[i].y = 130;
+		powerup[i].width = 16;
+		powerup[i].height = 10;
+		if(i == 0){
+			powerup[i].image = power_LED;
+		}else if(i == 1){
+			powerup[i].image = power_laser;
+		}else if(i == 2){
+			powerup[i].image = power_waveClear;
+		}else if(i == 3){
+			powerup[i].image = power_LED;
+		}
+		powerup[i].status = dead;
 	}
 }
 
