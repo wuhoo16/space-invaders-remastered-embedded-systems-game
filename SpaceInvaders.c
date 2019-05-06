@@ -182,7 +182,11 @@ uint8_t firerate_limit_counter = 2;		//allow player to fire at the beginning of 
 // powerup global variables
 uint8_t powerupIdx = 0;		// selects which powerup to spawn
 uint8_t powerupSpawn = 0; // flag set once powerup has spawned (1 per wave)
+uint8_t powerup_ct = 0;		// counter for secondary attacks
 
+// secondary attack global variables
+uint8_t bigMissile_counter = 4;	// allow player to fire first LED with no restrictions once equipped
+uint8_t laser_counter = 5;
 //sprites
 sprite_t player;
 sprite_t missiles[2];
@@ -524,7 +528,7 @@ int main(void){
 			current_row_number = 0;
 			wave_spawn_done = 0;
 			wave_number++;			//increment wave_number only if whole wave is dead
-				powerupSpawn = 0;	// clear powerup spawn flag
+			powerupSpawn = 0;	// clear powerup spawn flag
 			powerupIdx += 1; 		// increment powerup index for next wave
 			for(int i=0; i<4; i++){
 				for(int j=0; j<4; j++){
@@ -680,8 +684,17 @@ void SysTick_Handler(void){ // every 16.67 ms
 						}
 				}
 		}
-		if(disable_player_controls == 0){ // change to (PE1 == 1 &&  {add limitations to secondary fire button some kind of usage counter} && disable_player_controls == 0) once powerups added //
-			//SW1 = PE1 >> 1; //read port e pin 1 data (powerup weapon fire)
+//**** BUTTON CHECKING: CHECK PORT E PIN 1 (SECONDARY FIRE BUTTON) TO DETERMINE MISSILE SPAWN******************************************************************************
+		if(((PE1 >> 1) == 1) && (disable_player_controls == 0) && (upgrade != unequipped)){
+			if((upgrade == led) && (bigMissile_counter >= 4) && (powerup_ct > 0)){
+				
+			}
+			else if((upgrade == laser) && (laser_counter >= 5) && (powerup_ct > 0)){
+				
+			}		
+			else if((upgrade == waveclear) && (powerup_ct > 0)){// waveclear only has 1 charge
+				
+			}
 		}			
 //***********************************************************************************************************************************************************************
 
@@ -756,11 +769,14 @@ void SysTick_Handler(void){ // every 16.67 ms
 				((missiles[i].x + missiles[i].width > powerup[powerupIdx].x) && (missiles[i].x + missiles[i].width < (powerup[powerupIdx].x + powerup[powerupIdx].width))))){
 					powerup[powerupIdx].status = dying;
 					if(powerup[powerupIdx].image == power_LED){
-						upgrade = led;
+						upgrade = led;	// enable secondary attack (big missile)
+						powerup_ct = 3;	// set 3 charges
 					}else if(powerup[powerupIdx].image == power_laser){
-						upgrade = laser;
+						upgrade = laser;// enable secondary attack (laser)
+						powerup_ct = 2;	// set 2 charges
 					}else if(powerup[powerupIdx].image == power_waveClear){
-						upgrade = waveclear;
+						upgrade = waveclear;	// enable secondary attack (waveClear)
+						powerup_ct = 1;				// set 1 charge
 					}
 					missiles[i].status = dying;	// update missile status to DYING NOT DEAD
 					missileCollisionFlag[i] = 1;// set collision flag
@@ -917,7 +933,7 @@ void animation_spawn_delay(void){
 	}
 	
 	firerate_limit_counter++; //increment counter every 125 ms
-	
+	bigMissile_counter++;			// increment counter every 125 ms
 	if(wave_spawn_done == 1){//if last row has been spawned, don't increment counter
 		counter_125ms = 0; //keep counter at 0 until next wave spawns (MAKE SURE TO CLEAR WAVE SPAWN DONE FLAG UPON THE SPAWN OF THE FIRST ROW OF NEXT WAVE)										
 	}
