@@ -9,9 +9,12 @@
 #include <stdint.h>
 extern const unsigned char silence[1];
 extern const unsigned char laser5[3600];
+extern const unsigned char bigMissileFiringSound[7250]; // for LED missile audio (about .658 sec)
+extern const unsigned char laserFiringSound[10225]; // for laser secondary attack firing audio (about .927 secs)
+extern const unsigned char waveclearExplosionSound[21615]; // for waveclear secondary attack explosion audio (about 1.8 secs)
 //extern const unsigned char explosion1[6963]; //the old explosion audio (bad volume)
 extern const unsigned char explosion2[6919]; // 0.628 seconds == 628 ms
-extern const unsigned char enemyoof[2672]; //.242 secs
+extern const unsigned char enemyoof[3904]; //.354 secs
 extern const unsigned char playerdeathaudio[23748]; // about 2.15 secs
 extern const unsigned char dramaticexplosion[33248]; // about 3.02 seconds
 
