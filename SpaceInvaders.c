@@ -186,11 +186,13 @@ uint8_t powerup_ct = 0;		// counter for secondary attacks
 
 // secondary attack global variables
 // big missile (LED)
+uint8_t upgrade_bigMissile_flag = 0;
 uint8_t bigMissile_counter = 4;	// allow player to fire first LED with no restrictions once equipped
 uint8_t bigMissile_spawn = 0;
 uint8_t moveBigMissile_flag = 0;
 uint8_t bigMissileCollision_flag = 0;
 // laser
+uint8_t upgrade_laser_flag = 0;
 uint8_t laser_counter = 5;
 uint8_t laser_spawn = 0;
 uint8_t moveLaser_flag = 0;
@@ -198,6 +200,9 @@ uint8_t laserCollision_flag = 0;
 const uint16_t *laserFrame[3];
 uint8_t laserFrame_idx = 0;	// laser image frame index
 uint8_t laserFrame_dwell = 0;
+// waveclear
+uint8_t upgrade_waveClear_flag = 0;
+uint8_t waveClearDone_flag = 0;
 //sprites
 sprite_t player;
 sprite_t missiles[2];
@@ -756,13 +761,16 @@ void SysTick_Handler(void){ // every 16.67 ms
 		}
 //**** BUTTON CHECKING: CHECK PORT E PIN 1 (SECONDARY FIRE BUTTON) TO DETERMINE MISSILE SPAWN******************************************************************************
 		if(((PE1 >> 1) == 1) && (disable_player_controls == 0) && (upgrade != unequipped)){
-			if((upgrade == led) && (bigMissile_counter >= 4) && (powerup_ct > 0)){
+			// fire big missile
+			if((upgrade_bigMissile_flag == 1) && (bigMissile_counter >= 4) && (powerup_ct > 0)){
 				if(missile_LED.status == dead){// case for if LED dead/offscreen
 					missile_LED.x = (player.x + player.width/2) - missile_LED.width/2;			// assign starting x pos of missile
 					missile_LED.y = (player.y - player.height);															// assign starting y pos of missile	
 					bigMissile_spawn = 1;
 					powerup_ct--;	// decrement charge count
-				/*
+					if(powerup_ct == 0){
+						upgrade_bigMissile_flag = 0; // unequip big missile
+					}
 					if(sound_pointer != silence){ // missile fire sound can interrupt prev sound if conflicting, resume prev sound after laser sound is done
 						sound_pointer_save = sound_pointer;
 						sound_pointer = laser5;
@@ -777,18 +785,53 @@ void SysTick_Handler(void){ // every 16.67 ms
 						sound_length = 3600;
 						sound_index = 0;
 					}
-				*/
 				}															
 			}
-			else if((upgrade == laser) && (laser_counter >= 5) && (powerup_ct > 0)){
+			// fire laser
+			else if((upgrade_laser_flag == 1) && (laser_counter >= 5) && (powerup_ct > 0)){
 				if(missile_laser.status == dead){// case for if LED dead/offscreen
 					missile_laser.x = (player.x + player.width/2) - missile_laser.width/2;			// assign starting x pos of missile
 					missile_laser.y = (player.y - player.height);															// assign starting y pos of missile	
 					laser_spawn = 1;
 					powerup_ct--;	// decrement charge count
+					if(powerup_ct == 0){
+						upgrade_laser_flag = 0; // unequip laser
+					}
+					if(sound_pointer != silence){ // missile fire sound can interrupt prev sound if conflicting, resume prev sound after laser sound is done
+						sound_pointer_save = sound_pointer;
+						sound_pointer = laser5;
+						interrupting_laser_sound_flag = 1;
+						sound_length_save = sound_length;
+						sound_length = 3600;
+						sound_index_save = sound_index; // save sound index of prev sound before resetting to 0
+						sound_index = 0;						
+					}
+					else{ // if sound pointer set to silence when missile fire button pressed, just set to laser sound
+						sound_pointer = laser5;
+						sound_length = 3600;
+						sound_index = 0;
+					}
 				}
 			}		
 			else if((upgrade == waveclear) && (powerup_ct > 0)){// waveclear only has 1 charge
+				powerup_ct--;	// decrement charge count
+				if(powerup_ct == 0){
+						upgrade_waveClear_flag = 0; // unequip waveclear
+					}
+				if(sound_pointer != silence){ // missile fire sound can interrupt prev sound if conflicting, resume prev sound after laser sound is done
+						sound_pointer_save = sound_pointer;
+						sound_pointer = laser5;
+						interrupting_laser_sound_flag = 1;
+						sound_length_save = sound_length;
+						sound_length = 3600;
+						sound_index_save = sound_index; // save sound index of prev sound before resetting to 0
+						sound_index = 0;						
+				}
+				else{ // if sound pointer set to silence when missile fire button pressed, just set to laser sound
+					sound_pointer = laser5;
+					sound_length = 3600;
+					sound_index = 0;
+				}
 				for(int k = 0; k < 4; k++){ //for each of 4 rows
 					if(wave[wave_number].row_clear[k] == 0){ //only check kth row if clear flag not set
 						for(int j = 0; j < 4; j++){
@@ -813,13 +856,130 @@ void SysTick_Handler(void){ // every 16.67 ms
 									sound_index = 0;						//reset index
 							}// only check enemies that are alive
 						}//iterate for each of 4 enemies
-						continue;
+						waveClearDone_flag = 1;	// flag for possible use
+						break;
 					}//only check uncleared rows
 				}//iterate for each of 4 rows
 			}
 		}			
 //***********************************************************************************************************************************************************************
 
+
+//**** POWERUP-MISSILES COLLISION DETECTION
+	if(disable_player_controls != 1){ // no need to check for collision if player already died
+		// basic missile check
+		for(int i = 0; i < 2; i++){
+			if(missiles[i].status != dead){
+				if(powerup[powerupIdx].status == alive){	// skip collision detection if powerup is dead
+					// check vertical overlap (top)
+					if((((missiles[i].y < powerup[powerupIdx].y) && (missiles[i].y > (powerup[powerupIdx].y - powerup[powerupIdx].height))) ||
+					// check vertical overlap (bottom)
+					(((missiles[i].y - missiles[i].height) < powerup[powerupIdx].y) && ((missiles[i].y - missiles[i].height) > (powerup[powerupIdx].y - powerup[powerupIdx].height)))) &&
+					// check horizontal overlap (right)
+					(((missiles[i].x > powerup[powerupIdx].x) && (missiles[i].x < (powerup[powerupIdx].x + powerup[powerupIdx].width))) ||	
+					// check horizontal overlap (left)
+					((missiles[i].x + missiles[i].width > powerup[powerupIdx].x) && (missiles[i].x + missiles[i].width < (powerup[powerupIdx].x + powerup[powerupIdx].width))))){
+						powerup[powerupIdx].status = dying;
+						if(powerup[powerupIdx].image == power_LED){
+							upgrade = led;	// enable secondary attack (big missile)
+							upgrade_bigMissile_flag = 1;
+							upgrade_laser_flag = 0;
+							upgrade_waveClear_flag = 0;
+							powerup_ct = 3;	// set 3 charges
+						}else if(powerup[powerupIdx].image == power_laser){
+							upgrade = laser;// enable secondary attack (laser)
+							upgrade_laser_flag = 1;
+							upgrade_bigMissile_flag = 0;
+							upgrade_waveClear_flag = 0;
+							powerup_ct = 2;	// set 2 charges
+						}else if(powerup[powerupIdx].image == power_waveClear){
+							upgrade = waveclear;	// enable secondary attack (waveClear)
+							upgrade_waveClear_flag = 1;
+							upgrade_laser_flag = 0;
+							upgrade_bigMissile_flag = 0;
+							powerup_ct = 1;				// set 1 charge
+						}
+						missiles[i].status = dying;	// update missile status to DYING NOT DEAD
+						missileCollisionFlag[i] = 1;// set collision flag
+					}
+
+				}//end of if-statement for collision check on all 4 sides
+			}// skip is basic missile is dead
+		}// check both basic missiles
+		
+		// big missile check
+		if(missile_LED.status != dead){
+			if(powerup[powerupIdx].status == alive){	// skip collision detection if powerup is dead
+				// check vertical overlap (top)
+				if((((missile_LED.y < powerup[powerupIdx].y) && (missile_LED.y > (powerup[powerupIdx].y - powerup[powerupIdx].height))) ||
+				// check vertical overlap (bottom)
+				(((missile_LED.y - missile_LED.height) < powerup[powerupIdx].y) && ((missile_LED.y - missile_LED.height) > (powerup[powerupIdx].y - powerup[powerupIdx].height)))) &&
+				// check horizontal overlap (right)
+				(((missile_LED.x > powerup[powerupIdx].x) && (missile_LED.x < (powerup[powerupIdx].x + powerup[powerupIdx].width))) ||	
+				// check horizontal overlap (left)
+				((missile_LED.x + missile_LED.width > powerup[powerupIdx].x) && (missile_LED.x + missile_LED.width < (powerup[powerupIdx].x + powerup[powerupIdx].width))))){
+					powerup[powerupIdx].status = dying;
+					if(powerup[powerupIdx].image == power_LED){
+						upgrade = led;	// enable secondary attack (big missile)
+						upgrade_bigMissile_flag = 1;
+						upgrade_laser_flag = 0;
+						upgrade_waveClear_flag = 0;
+						powerup_ct = 3;	// set 3 charges
+					}else if(powerup[powerupIdx].image == power_laser){
+						upgrade = laser;// enable secondary attack (laser)
+						upgrade_laser_flag = 1;
+						upgrade_bigMissile_flag = 0;
+						upgrade_waveClear_flag = 0;
+						powerup_ct = 2;	// set 2 charges
+					}else if(powerup[powerupIdx].image == power_waveClear){
+						upgrade = waveclear;	// enable secondary attack (waveClear)
+						upgrade_waveClear_flag = 1;
+						upgrade_laser_flag = 0;
+						upgrade_bigMissile_flag = 0;
+						powerup_ct = 1;				// set 1 charge
+					}
+					missile_LED.status = dying;	// update missile status to DYING NOT DEAD
+					bigMissileCollision_flag = 1;// set collision flag
+				}
+
+			}//end of if-statement for collision check on all 4 sides
+		}// skip is big missile is dead
+		
+		// laser check
+		if(missile_laser.status != dead){
+			if(powerup[powerupIdx].status == alive){	// skip collision detection if powerup is dead
+				// check vertical overlap (top)
+				if((((missile_laser.y < powerup[powerupIdx].y) && (missile_laser.y > (powerup[powerupIdx].y - powerup[powerupIdx].height))) ||
+				// check vertical overlap (bottom)
+				(((missile_laser.y - missile_laser.height) < powerup[powerupIdx].y) && ((missile_laser.y - missile_laser.height) > (powerup[powerupIdx].y - powerup[powerupIdx].height)))) &&
+				// check horizontal overlap (right)
+				(((missile_laser.x > powerup[powerupIdx].x) && (missile_laser.x < (powerup[powerupIdx].x + powerup[powerupIdx].width))) ||	
+				// check horizontal overlap (left)
+				((missile_laser.x + missile_laser.width > powerup[powerupIdx].x) && (missile_laser.x + missile_laser.width < (powerup[powerupIdx].x + powerup[powerupIdx].width))))){
+					powerup[powerupIdx].status = dying;
+					if(powerup[powerupIdx].image == power_LED){
+						upgrade = led;	// enable secondary attack (big missile)
+						upgrade_bigMissile_flag = 1;
+						upgrade_laser_flag = 0;
+						upgrade_waveClear_flag = 0;
+						powerup_ct = 3;	// set 3 charges
+					}else if(powerup[powerupIdx].image == power_laser){
+						upgrade = laser;// enable secondary attack (laser)
+						upgrade_laser_flag = 1;
+						upgrade_bigMissile_flag = 0;
+						upgrade_waveClear_flag = 0;
+						powerup_ct = 2;	// set 2 charges
+					}else if(powerup[powerupIdx].image == power_waveClear){
+						upgrade = waveclear;	// enable secondary attack (waveClear)
+						upgrade_waveClear_flag = 1;
+						upgrade_laser_flag = 0;
+						upgrade_bigMissile_flag = 0;
+						powerup_ct = 1;				// set 1 charge
+					}
+				}
+			}//end of if-statement for collision check on all 4 sides
+		}// skip is laser is dead
+	}
 		
 //**** COLLISION DETECTION (BETWEEN MISSILES AND ENEMIES) ***********************************************************************************************************************************************
 	if(disable_player_controls != 1){ // no need to check for collision if player already died
@@ -973,39 +1133,7 @@ void SysTick_Handler(void){ // every 16.67 ms
 			}//iterate for each of 4 rows
 		}//end of big missile collision detection*****************************************
 	}// end of disable player control flag if-check
-	
-//**** POWERUP-MISSILE COLLISION DETECTION
-	if(disable_player_controls != 1){ // no need to check for collision if player already died
-		for(int i = 0; i < 2; i++){
-			if(missiles[i].status != dead){
-					if(powerup[powerupIdx].status == alive){	// skip collision detection if enemy is dead
-						// check vertical overlap (top)
-						if((((missiles[i].y < powerup[powerupIdx].y) && (missiles[i].y > (powerup[powerupIdx].y - powerup[powerupIdx].height))) ||
-						// check vertical overlap (bottom)
-						(((missiles[i].y - missiles[i].height) < powerup[powerupIdx].y) && ((missiles[i].y - missiles[i].height) > (powerup[powerupIdx].y - powerup[powerupIdx].height)))) &&
-						// check horizontal overlap (right)
-						(((missiles[i].x > powerup[powerupIdx].x) && (missiles[i].x < (powerup[powerupIdx].x + powerup[powerupIdx].width))) ||	
-						// check horizontal overlap (left)
-						((missiles[i].x + missiles[i].width > powerup[powerupIdx].x) && (missiles[i].x + missiles[i].width < (powerup[powerupIdx].x + powerup[powerupIdx].width))))){
-							powerup[powerupIdx].status = dying;
-							if(powerup[powerupIdx].image == power_LED){
-								upgrade = led;	// enable secondary attack (big missile)
-								powerup_ct = 3;	// set 3 charges
-							}else if(powerup[powerupIdx].image == power_laser){
-								upgrade = laser;// enable secondary attack (laser)
-								powerup_ct = 2;	// set 2 charges
-							}else if(powerup[powerupIdx].image == power_waveClear){
-								upgrade = waveclear;	// enable secondary attack (waveClear)
-								powerup_ct = 1;				// set 1 charge
-							}
-							missiles[i].status = dying;	// update missile status to DYING NOT DEAD
-							missileCollisionFlag[i] = 1;// set collision flag
-						}
 
-					}//end of if-statement for collision check on all 4 sides
-			}
-		}
-	}
 
 //**** POWERUP MOVEMENT ****
 	// powerup spawn
