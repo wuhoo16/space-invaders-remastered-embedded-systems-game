@@ -72,7 +72,9 @@
 #define PE0       (*((volatile uint32_t *)0x40024004))
 #define PE1				(*((volatile uint32_t *)0x40024008))
 	
-
+#define bigMissile_Idx	0
+#define laser_Idx				1
+#define waveClear_Idx		2
 //FUNCTION PROTOTYPES BELOW
 //----------------------------------------------------------------------------------------------------
 void DisableInterrupts(void); // Disable interrupts
@@ -182,17 +184,17 @@ uint8_t firerate_limit_counter = 2;		//allow player to fire at the beginning of 
 // powerup global variables
 uint8_t powerupIdx = 0;		// selects which powerup to spawn
 uint8_t powerupSpawn = 0; // flag set once powerup has spawned (1 per wave)
-uint8_t powerup_ct = 0;		// counter for secondary attacks
+uint8_t powerup_ct[3] = {0, 0, 0};		// counter for secondary attacks
 
 // secondary attack global variables
 // big missile (LED)
-uint8_t upgrade_bigMissile_flag = 0;
+	//uint8_t upgrade_bigMissile_flag = 0; // does same thing as upgrade variable
 uint8_t bigMissile_counter = 4;	// allow player to fire first LED with no restrictions once equipped
 uint8_t bigMissile_spawn = 0;
 uint8_t moveBigMissile_flag = 0;
 uint8_t bigMissileCollision_flag = 0;
 // laser
-uint8_t upgrade_laser_flag = 0;
+	//uint8_t upgrade_laser_flag = 0;
 uint8_t laser_counter = 5;
 uint8_t laser_spawn = 0;
 uint8_t moveLaser_flag = 0;
@@ -201,7 +203,7 @@ const uint16_t *laserFrame[3];
 uint8_t laserFrame_idx = 0;	// laser image frame index
 uint8_t laserFrame_dwell = 0;
 // waveclear
-uint8_t upgrade_waveClear_flag = 0;
+	//uint8_t upgrade_waveClear_flag = 0;
 uint8_t waveClearDone_flag = 0;
 //sprites
 sprite_t player;
@@ -443,27 +445,31 @@ int main(void){
 		}//***************************************************************************************************************
 		
 		// ***** BIG MISSILE MOVEMENT (up by 1 pixel based on moveBigMissile_flag global flag) *******************************************
-		if(moveBigMissile_flag == 1){
-			moveBigMissile_flag = 0;													//clear flag
-			if(missile_LED.status == moving){
-				missile_LED.y--;
-				ST7735_DrawBitmap(missile_LED.x, missile_LED.y, missile_LED.image, missile_LED.width, missile_LED.height);
+		if((missile_LED.status != dead) && (missile_LED.status != dying)){
+			if(moveBigMissile_flag == 1){
+				moveBigMissile_flag = 0;													//clear flag
+				if(missile_LED.status == moving){
+					missile_LED.y--;
+					ST7735_DrawBitmap(missile_LED.x, missile_LED.y, missile_LED.image, missile_LED.width, missile_LED.height);
+				}
 			}		
 		}//***************************************************************************************************************
 		
 		// ***** LASER MOVEMENT (up by 1 pixel based on moveLaser_flag global flag) *******************************************
+		if(missile_laser.status != dead){
 		if(moveLaser_flag == 1){
-			moveLaser_flag = 0;													//clear flag
-			if(missile_laser.status == moving){
-				missile_laser.y--;
-				ST7735_DrawBitmap(missile_laser.x, missile_laser.y, laserFrame[laserFrame_idx], missile_laser.width, missile_laser.height);
-				if(laserFrame_dwell == 10){
-					laserFrame_idx = (laserFrame_idx + 1) % 3;	// increment frame index
-					laserFrame_dwell = 0;	// reset frame dwell counter
-				}else{
-					laserFrame_dwell++;
+				moveLaser_flag = 0;													//clear flag
+				if(missile_laser.status == moving){
+					missile_laser.y--;
+					ST7735_DrawBitmap(missile_laser.x, missile_laser.y, laserFrame[laserFrame_idx], missile_laser.width, missile_laser.height);
+					if(laserFrame_dwell == 10){
+						laserFrame_idx = (laserFrame_idx + 1) % 3;	// increment frame index
+						laserFrame_dwell = 0;	// reset frame dwell counter
+					}else{
+						laserFrame_dwell++;
+					}
 				}
-			}		
+			}			
 		}//***************************************************************************************************************
 		
 	
@@ -761,15 +767,17 @@ void SysTick_Handler(void){ // every 16.67 ms
 		}
 //**** BUTTON CHECKING: CHECK PORT E PIN 1 (SECONDARY FIRE BUTTON) TO DETERMINE MISSILE SPAWN******************************************************************************
 		if(((PE1 >> 1) == 1) && (disable_player_controls == 0) && (upgrade != unequipped)){
+			//SW1 = PE1; // read from port e pin 1 to clear the data
 			// fire big missile
-			if((upgrade_bigMissile_flag == 1) && (bigMissile_counter >= 4) && (powerup_ct > 0)){
+			if((upgrade == led) && (bigMissile_counter >= 4) && (powerup_ct[bigMissile_Idx] > 0)){
 				if(missile_LED.status == dead){// case for if LED dead/offscreen
 					missile_LED.x = (player.x + player.width/2) - missile_LED.width/2;			// assign starting x pos of missile
 					missile_LED.y = (player.y - player.height);															// assign starting y pos of missile	
 					bigMissile_spawn = 1;
-					powerup_ct--;	// decrement charge count
-					if(powerup_ct == 0){
-						upgrade_bigMissile_flag = 0; // unequip big missile
+					powerup_ct[bigMissile_Idx]--;	// decrement charge count
+					if(powerup_ct[bigMissile_Idx] == 0){
+						upgrade = unequipped;
+						//upgrade_bigMissile_flag = 0; // unequip big missile
 					}
 					if(sound_pointer != silence){ // missile fire sound can interrupt prev sound if conflicting, resume prev sound after laser sound is done
 						sound_pointer_save = sound_pointer;
@@ -788,14 +796,15 @@ void SysTick_Handler(void){ // every 16.67 ms
 				}															
 			}
 			// fire laser
-			else if((upgrade_laser_flag == 1) && (laser_counter >= 5) && (powerup_ct > 0)){
+			else if((upgrade == laser) && (laser_counter >= 5) && (powerup_ct[laser_Idx] > 0)){
 				if(missile_laser.status == dead){// case for if LED dead/offscreen
 					missile_laser.x = (player.x + player.width/2) - missile_laser.width/2;			// assign starting x pos of missile
 					missile_laser.y = (player.y - player.height);															// assign starting y pos of missile	
 					laser_spawn = 1;
-					powerup_ct--;	// decrement charge count
-					if(powerup_ct == 0){
-						upgrade_laser_flag = 0; // unequip laser
+					powerup_ct[laser_Idx]--;	// decrement charge count
+					if(powerup_ct[laser_Idx] == 0){
+						upgrade = unequipped;
+						//upgrade_laser_flag = 0; // unequip laser
 					}
 					if(sound_pointer != silence){ // missile fire sound can interrupt prev sound if conflicting, resume prev sound after laser sound is done
 						sound_pointer_save = sound_pointer;
@@ -813,10 +822,11 @@ void SysTick_Handler(void){ // every 16.67 ms
 					}
 				}
 			}		
-			else if((upgrade == waveclear) && (powerup_ct > 0)){// waveclear only has 1 charge
-				powerup_ct--;	// decrement charge count
-				if(powerup_ct == 0){
-						upgrade_waveClear_flag = 0; // unequip waveclear
+			else if((upgrade == waveclear) && (powerup_ct[waveClear_Idx] > 0)){// waveclear only has 1 charge
+				powerup_ct[waveClear_Idx]--;	// decrement charge count
+				if(powerup_ct[waveClear_Idx] == 0){
+						upgrade = unequipped;
+						//upgrade_waveClear_flag = 0; // unequip waveclear
 					}
 				if(sound_pointer != silence){ // missile fire sound can interrupt prev sound if conflicting, resume prev sound after laser sound is done
 						sound_pointer_save = sound_pointer;
@@ -882,22 +892,22 @@ void SysTick_Handler(void){ // every 16.67 ms
 						powerup[powerupIdx].status = dying;
 						if(powerup[powerupIdx].image == power_LED){
 							upgrade = led;	// enable secondary attack (big missile)
-							upgrade_bigMissile_flag = 1;
-							upgrade_laser_flag = 0;
-							upgrade_waveClear_flag = 0;
-							powerup_ct = 3;	// set 3 charges
+							//upgrade_bigMissile_flag = 1;
+							//upgrade_laser_flag = 0;
+							//upgrade_waveClear_flag = 0;
+							powerup_ct[bigMissile_Idx] = 3;	// set 3 charges
 						}else if(powerup[powerupIdx].image == power_laser){
 							upgrade = laser;// enable secondary attack (laser)
-							upgrade_laser_flag = 1;
-							upgrade_bigMissile_flag = 0;
-							upgrade_waveClear_flag = 0;
-							powerup_ct = 2;	// set 2 charges
+							//upgrade_laser_flag = 1;
+							//upgrade_bigMissile_flag = 0;
+							//upgrade_waveClear_flag = 0;
+							powerup_ct[laser_Idx] = 2;	// set 2 charges
 						}else if(powerup[powerupIdx].image == power_waveClear){
 							upgrade = waveclear;	// enable secondary attack (waveClear)
-							upgrade_waveClear_flag = 1;
-							upgrade_laser_flag = 0;
-							upgrade_bigMissile_flag = 0;
-							powerup_ct = 1;				// set 1 charge
+							//upgrade_waveClear_flag = 1;
+							//upgrade_laser_flag = 0;
+							//upgrade_bigMissile_flag = 0;
+							powerup_ct[waveClear_Idx] = 1;				// set 1 charge
 						}
 						missiles[i].status = dying;	// update missile status to DYING NOT DEAD
 						missileCollisionFlag[i] = 1;// set collision flag
@@ -921,24 +931,25 @@ void SysTick_Handler(void){ // every 16.67 ms
 					powerup[powerupIdx].status = dying;
 					if(powerup[powerupIdx].image == power_LED){
 						upgrade = led;	// enable secondary attack (big missile)
-						upgrade_bigMissile_flag = 1;
-						upgrade_laser_flag = 0;
-						upgrade_waveClear_flag = 0;
-						powerup_ct = 3;	// set 3 charges
+						//upgrade_bigMissile_flag = 1;
+						//upgrade_laser_flag = 0;
+						//upgrade_waveClear_flag = 0;
+						powerup_ct[bigMissile_Idx] = 4;	// set 3 charges
 					}else if(powerup[powerupIdx].image == power_laser){
+						missile_laser.status = dead;
 						upgrade = laser;// enable secondary attack (laser)
-						upgrade_laser_flag = 1;
-						upgrade_bigMissile_flag = 0;
-						upgrade_waveClear_flag = 0;
-						powerup_ct = 2;	// set 2 charges
+						//upgrade_laser_flag = 1;
+						//upgrade_bigMissile_flag = 0;
+						//upgrade_waveClear_flag = 0;
+						powerup_ct[laser_Idx] = 3;	// set 2 charges
 					}else if(powerup[powerupIdx].image == power_waveClear){
 						upgrade = waveclear;	// enable secondary attack (waveClear)
-						upgrade_waveClear_flag = 1;
-						upgrade_laser_flag = 0;
-						upgrade_bigMissile_flag = 0;
-						powerup_ct = 1;				// set 1 charge
+						//upgrade_waveClear_flag = 1;
+						//upgrade_laser_flag = 0;
+						//upgrade_bigMissile_flag = 0;
+						powerup_ct[waveClear_Idx] = 2;				// set 1 charge
 					}
-					missile_LED.status = dying;	// update missile status to DYING NOT DEAD
+					missile_LED.status = dead;	// update missile status to DYING NOT DEAD
 					bigMissileCollision_flag = 1;// set collision flag
 				}
 
@@ -959,22 +970,22 @@ void SysTick_Handler(void){ // every 16.67 ms
 					powerup[powerupIdx].status = dying;
 					if(powerup[powerupIdx].image == power_LED){
 						upgrade = led;	// enable secondary attack (big missile)
-						upgrade_bigMissile_flag = 1;
-						upgrade_laser_flag = 0;
-						upgrade_waveClear_flag = 0;
-						powerup_ct = 3;	// set 3 charges
+						//upgrade_bigMissile_flag = 1;
+						//upgrade_laser_flag = 0;
+						//upgrade_waveClear_flag = 0;
+						powerup_ct[bigMissile_Idx] = 4;	// set 3 charges
 					}else if(powerup[powerupIdx].image == power_laser){
 						upgrade = laser;// enable secondary attack (laser)
-						upgrade_laser_flag = 1;
-						upgrade_bigMissile_flag = 0;
-						upgrade_waveClear_flag = 0;
-						powerup_ct = 2;	// set 2 charges
+						//upgrade_laser_flag = 1;
+						//upgrade_bigMissile_flag = 0;
+						//upgrade_waveClear_flag = 0;
+						powerup_ct[laser_Idx] = 3;	// set 2 charges
 					}else if(powerup[powerupIdx].image == power_waveClear){
 						upgrade = waveclear;	// enable secondary attack (waveClear)
-						upgrade_waveClear_flag = 1;
-						upgrade_laser_flag = 0;
-						upgrade_bigMissile_flag = 0;
-						powerup_ct = 1;				// set 1 charge
+						//upgrade_waveClear_flag = 1;
+						//upgrade_laser_flag = 0;
+						//upgrade_bigMissile_flag = 0;
+						powerup_ct[waveClear_Idx] = 2;				// set 1 charge
 					}
 				}
 			}//end of if-statement for collision check on all 4 sides
@@ -1302,19 +1313,23 @@ void missile_move(void) { // fires primary missile at 80 HZ (moves 1 pixel every
 		}
 	}
 	// check if big missile has reached top of screen, if not, set moveBigMissile_flag
-	if(missile_LED.y == 0){
-		missile_LED.status = dead;
+	if(missile_LED.status != dead){
+		if(missile_LED.y == 0){
+			missile_LED.status = dead;
+		}
+		else{
+			moveBigMissile_flag = 1;
+		}	
 	}
-	else{
-		moveBigMissile_flag = 1;
-	}	
 	// check if laser has reached top of screen, if not, set moveLaser_flag
-	if(missile_laser.y == 0){
-		missile_laser.status = dead;
+	if(missile_laser.status != dead){
+		if(missile_laser.y == 0){
+			missile_laser.status = dead;
+		}
+		else{
+			moveLaser_flag = 1;
+		}		
 	}
-	else{
-		moveLaser_flag = 1;
-	}		
 }		
 
 //-------------------------------------------------------------------------------------------------------------------
