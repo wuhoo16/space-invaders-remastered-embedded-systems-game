@@ -99,10 +99,45 @@ void playsound(void);	// function that outputs samples of sound arrays depending
 void animation_spawn_delay(void); //periodic function that is called every 125 ms through the Timer0 ISR
 void missile_move(void);
 
-void reload_movement_cts(uint8_t i, uint8_t j); // updated to reload every value of the movement 2D arrays
+void reload_movement_cts(void); // updated to reload every value of the movement 2D arrays
 
-void gameOver(void);
-//----------------------------------------------------------------------------------------------------
+
+//MAIN HELPER FUNCTIONS
+void gameOver(void); //disables interrupts except timer1 for sound, displays game over messages and final score, then remain indefinitely in a while loop to freeze final screen
+void gameOverPlayerDeathAnimation(void); // freezes player, flash 3 times, play losing audio, big explosion animation/audio
+void gameOverEnemyDeathAnimation(void); // similar to previous function: freezes screen, but only flashes enemy, then explosion animation and change gameOver_flag to 2
+void spawnBasicMissile(void); // checks the systick ISR if the m1spawn and m2spawn flags were set to 1, if so, then reset flag, draw missile bmp, reset fireratelimit_counter, and set the missile sprite status to moving
+void spawnBigMissile(void);
+void spawnLaser(void);
+void movePlayer(void); //move player sprite BY 1 PIXEL PER 32 ADC VALUE based off of difference in ADC values (IGNORES CHANGES IN ADC VALUE LESS THAN 32)
+void moveAllMissiles(void); //moves ALL PLAYER MISSILES (including basic, big LED, and laser) //NOT CALLED YET CURRENTLY COMMENTED OUT
+void moveBasicMissile(void); //move player basic missile based on movemissile global flag; decrement y position of missile and draws missile at new position
+void moveBigMissile(void);
+void moveLaser(void);
+void fillBasicMissile(void); //FillRect over the basic missile and SET MISSILE SPRITE STATUS TO DEAD if missileCollisionFlag[i] is set
+void fillBigMissile(void);
+void fillEnemyDrawExplosionFrame1(void);  //IF COLLISION FLAG ATTRIBUTE SET FOR ENEMY, DRAW OVER ENEMY AND DRAW FIRST FRAME OF EXPLOSION
+void explosionAnimationUpdate(void); // Draw NEWEXPLOSION_ANIM FRAMES AND CLEARING EXPLOSIONS ONCE ANIMATION IS DONE
+void movePowerup(void);
+void moveEnemies(void); // iterate through 4 rows, if row uncleared, draw bmp of new position for enemies that are still alive
+void printWaveClearedMessages(void); // uses a switch(wave_number) to print messages after each wave is cleared (using ST7735_DrawString)
+void waveClearedTransition(void); // DISABLES INTERRUPTS DURING FUNCTION, PRINT WAVE CLEARED MESSAGES, DELAYS 2 ms, AND DOES ALL VARIABLE RELOADS NEEDED FOR NEXT WAVE (such as current_row_number, movement_cts, powerup_spawn, wave_spawn flag...)
+void printCurrentScore(void); // converts total_score to a character array and draws 4 digit score to top left corner of LCD
+void spawnNextRow(void); // spawns new row every 3 seconds based on counter_125ms until current_row_number == 4
+
+
+// SYSTICK HELPER FUNCTIONS
+void DetectEnemyPlayerCollision(void); // check if enemy has collided with player sprite --> IF SO, SETS gaeOver_flag TO 1
+void DetectEnemyAtBottom(void); // Check if enemy y position == 159 aka touches bottom of screen --> IF SO, SETS gaeOver_flag TO 1
+void getADC(void); // put ADC data into ADCMAIL using ADC_In() and set semaphore flag to 1 (DOES NOT RUN IF gaeOver_flag SET TO 1)
+void DetectPE0(void); // check primary button press (red) (DOES NOT RUN IF GAMEOVERFLAG SET TO 1)
+void DetectPE1(void); // check secondary button press (yellow) (DOES NOT RUN IF GAMEOVERFLAG SET TO 1)
+void DetectMissilePowerupCollision(void);
+void DetectMissileEnemyCollision(void);
+void PowerupMovement_PositionUpdate(void);
+void EnemyMovement_PositionUpdate(void);
+void UpdateWaveStructAttr(void); // checks which enemies are dead and updates wave[wave_number].clear and wave[wave_number].row_clear[4] attributes accordingly
+// end of function prototypes--------------------------------------------------------------------------------------------------------------------------------------------------------------------- 
 
 
 
@@ -257,17 +292,21 @@ char msg_gameOver_line2[] ={'Y', 'O', 'U', ' ', 'F', 'A', 'I', 'L', 'E', 'D', ' 
 char msg_finalscore[] = {'F', 'I', 'N', 'A', 'L', ' ', 'S', 'C', 'O', 'R', 'E', ':', ' ', 0}; // 13 chars plus 4 chars for score = 17 chars (offset by 1)
 
 //ANDY'S GAME OVER IDEA GLOBAL VARIABLES
-uint8_t collided_enemy_i = 0;
-uint8_t collided_enemy_j = 0;
-uint8_t disable_player_controls = 0;
+uint8_t collided_enemy_i; // save the row position of the colliding enemies that caused game over
+uint8_t collided_enemy_j = 0; // save the col position of the colliding enemy that touched the player
+int8_t collided_enemies_j[4] = {-1, -1, -1, -1}; // save the col positions of the enemies that reached bottom that caused game over
+uint8_t j_index = 0;
+//uint8_t disable_player_controls = 0;
 //------------------------------------------------------------------------------------------------
 
 
 
 
-//MAIN STARTS HERE==============================================================================================================================================================================================
-//===================================================================================================================================================================================================
+//MAIN STARTS HERE======================================================================================================================================================================================================
+//======================================================================================================================================================================================================================
+//======================================================================================================================================================================================================================
 int main(void){
+	//All GPIO port/interfacing/interrupts initialization calls
 	DisableInterrupts();
   PLL_Init(Bus80MHz); // Bus clock is 80 MHz 
   Random_Init(1);
@@ -280,7 +319,7 @@ int main(void){
 	Timer2_Init(&missile_move, 1000000); 			//Timer2 interrupts at 80 Hz (player primary fire... missiles travel 1 pixel per 12.5 ms = 80 pixels per second)
   ST7735_FillScreen(0x0000);								// set screen to black
   
-	  //ST7735_DrawBitmap(53, 141, Bunker0, 18,5); //no bunker in our game
+	//All sprite init calls (except player sprite)
 	missilesInit();
 	powerupInit();
 	collisionFlag_Init();
@@ -290,962 +329,215 @@ int main(void){
 	wave1Init();
 	wave2Init();
 	wave3Init();
-	Timer0_Init(&animation_spawn_delay, 10000000); 				//Timer0 interrupts at 8 Hz (every 125 ms) ALSO CONTROLS ROW SPAWN EVERY 3 s)
-	playerInit();
-//  Delay100ms(2);
+	//playerInit();
+	
 	EnableInterrupts();
+	Timer0_Init(&animation_spawn_delay, 10000000); 				//Timer0 interrupts at 8 Hz (every 125 ms) ALSO CONTROLS ROW SPAWN EVERY 3 s)
 	Data = ADCMAIL;			// get init player position (ADC)
 	Prev_adc = Data;		// init previous adc value
 	
+	playerInit(); // moved playerInit here after ADC reading to try to fix the initial player position bug
 	ST7735_DrawBitmap(player.x, player.y, player.image, player.width, player.height); 		// player position init based on ADC
 
-	//gameOver(); // don't display game over before game starts
-// **** START OF GAME ENGINE ***********************************************************************************************************************************************************************
-  while(1){ 
-// **** GAME OVER CHECK *********
-		if(player.status == dying && gameOver_flag == 1){ // ISR detected enemy+player collision
-			NVIC_ST_CTRL_R = 0x0005; // disable systick interrupts to freeze collision frame and prevent all enemy movement, missile fire, adc movement
-			disable_player_controls = 1; // SET DIABLE FLAG TO 1 SINCE NOW PLAYER SHOULDN'T BE ABLE TO DO ANYTHING
-			//DisableInterrupts(); //prevent all interrupts DON'T USE THIS SINCE WE STILL NEED TIMER0 INTERRUPTS FOR ANIMATIONS AND TIMER1 FOR SOUND
-			sound_pointer = playerdeathaudio; // set sound effect to player game over jingle
-			sound_length = 23748;
-			sound_index = 0;
-			for(int i = 0; i < 4; i++){ //flash player and colliding enemy 4 times
-				Delay100ms(5); // delay 500 ms
-				ST7735_FillRect(wave[wave_number].enemy[collided_enemy_i][collided_enemy_j].x, wave[wave_number].enemy[collided_enemy_i][collided_enemy_j].y - wave[wave_number].enemy[collided_enemy_i][collided_enemy_j].height + 1, wave[wave_number].enemy[collided_enemy_i][collided_enemy_j].width, wave[wave_number].enemy[collided_enemy_i][collided_enemy_j].height, 0x0000);
-				ST7735_FillRect(player.x, player.y - player.height + 1, player.width, player.height, 0x0000); // clear image of collided enemy and player (player has no top and bottom border so needs + 1)
-				Delay100ms(2); // delay 200 ms
-				ST7735_DrawBitmap(wave[wave_number].enemy[collided_enemy_i][collided_enemy_j].x, wave[wave_number].enemy[collided_enemy_i][collided_enemy_j].y, wave[wave_number].enemy[collided_enemy_i][collided_enemy_j].image, wave[wave_number].enemy[collided_enemy_i][collided_enemy_j].width, wave[wave_number].enemy[collided_enemy_i][collided_enemy_j].height);
-				ST7735_DrawBitmap(player.x, player.y, player.image, player.width, player.height);
-			}
-			// clear enemy and player for good
-			ST7735_FillRect(wave[wave_number].enemy[collided_enemy_i][collided_enemy_j].x, wave[wave_number].enemy[collided_enemy_i][collided_enemy_j].y - wave[wave_number].enemy[collided_enemy_i][collided_enemy_j].height + 1, wave[wave_number].enemy[collided_enemy_i][collided_enemy_j].width, wave[wave_number].enemy[collided_enemy_i][collided_enemy_j].height, 0x0000);
-			ST7735_FillRect(player.x, player.y - player.height + 1, player.width, player.height, 0x0000); // clear image of collided enemy and player
-			player.status = dead;
-			wave[wave_number].enemy[collided_enemy_i][collided_enemy_j].status = dead;
-			while(sound_pointer != silence){} //wait until sound effect is done playing before continuing
-		}
-		if(player.status == dead){ // do explosion animation and set sound pt for bigger explosion, also increment gameover flag right before exiting this if-statement
-						//NVIC_ST_CTRL_R = 0x0000;
-						//NVIC_ST_RELOAD_R = 5333333; // interrupt at 15 hz (slow-motion)
-						//NVIC_ST_CTRL_R = 0x0007; // arm interrupts again but now with player controls disabled and movement speed of all enemies quartered (15 Hz)
-			
-					//draw first frame of explosion
-						ST7735_DrawBitmap(explosion_anim[explosion_frame].x, explosion_anim[explosion_frame].y, explosion_anim[explosion_frame].image, explosion_anim[explosion_frame].width, explosion_anim[explosion_frame].height);					
-						sound_pointer = dramaticexplosion; // replace animation with bigger, more dramatic explosion with more frames, and more detail (10 frames?)
-						sound_length = 33248; // edit length to match new sound array size
-						sound_index = 0;
-			
-						explosion_counter = 0; //clear counter
-						explosion_done = 0;		//timer0 starts incrementing explosion_counter in the animation/spawn_delay function
-						explosion_frame++;
-			
-						while(explosion_done == 0){ // keep running until last frame of explosion is cleared
-								if(explosion_done == 0 && explosion_counter >= 4 && explosion_frame < 5){	//only draw next frame if explosion counter is set (375 ms has passed since last frame); if no collosions occur, explosion counter = 0 and explosion frame = 6
-										ST7735_DrawBitmap(explosion_anim[explosion_frame].x, explosion_anim[explosion_frame].y, explosion_anim[explosion_frame].image, explosion_anim[explosion_frame].width, explosion_anim[explosion_frame].height);
-										explosion_counter = 0;
-										explosion_frame++;				//increment frame after drawing previous frame
-								}
-								if(explosion_frame == 5){ //last explosion frame has just been drawn --> clear explosion and set explosion_done flag for timer to stop incrementing counter
-										ST7735_FillRect(explosion_anim[4].x, explosion_anim[4].y - explosion_anim[4].height + 1, explosion_anim[4].width, explosion_anim[4].height, 0x0000);
-										explosion_done = 1;
-										explosion_counter = 0;
-										explosion_frame = 6;  //set to 6 until it is reset to 0 on the next collision
-								}
-								if(clear_explosion_early == 1){						//clears a previous explosions BMP if another explosion happens to occur before the first is done animating (prevents previous image from staying forever)
-										clear_explosion_early = 0; //clear flag
-										ST7735_FillRect(x_save, y_save - explosion_anim[4].height + 1, explosion_anim[4].width, explosion_anim[4].height, 0x0000);
-								}
-						}
-						ST7735_FillScreen(0x0000); // clear screen to all black since explosion animation is done
-						while(sound_pointer != silence){ //busy-wait until big explosion sound is done playing and animation is over to move on to final game over screen
-						}
-						gameOver_flag = 2; // set game over flag to 2 once dramatic explosion is done playing
-							//gameOver();
-							//return 0;				
-		}
-		if(gameOver_flag == 2){
-			gameOver();
-			return 0;
-		}
-// ******************************
-		
-		
-		// **** MISSILE SPAWN: based off of m1spawn and m2spawn global flags (set in SysTick ISR) ****************************
-			if(m1spawn == 1){
-				m1spawn = 0;					//clear flag
-				ST7735_DrawBitmap(missiles[0].x, missiles[0].y, missiles[0].image, missiles[0].width, missiles[0].height);
-				firerate_limit_counter = 0;		//reset counter once missile has spawned			 				  
-				missiles[0].status = moving;
-			}
-			if(m2spawn == 1){
-				m2spawn = 0;					//clear flag
-				ST7735_DrawBitmap(missiles[1].x, missiles[1].y, missiles[1].image, missiles[1].width, missiles[1].height);
-				firerate_limit_counter = 0;		//reset counter once missile has spawned				
-				missiles[1].status = moving;		
-			}//******************************************************************************************************************
-			
-		// **** BIG MISSILE SPAWN: based off of bigMissile_spawn global flag (set in SysTick ISR) ****************************
-			if(bigMissile_spawn == 1){
-				bigMissile_spawn = 0;					//clear flag
-				ST7735_DrawBitmap(missile_LED.x, missile_LED.y, missile_LED.image, missile_LED.width, missile_LED.height);
-				firerate_limit_counter = 0;		//reset counter once missile has spawned			 				  
-				missile_LED.status = moving;
-			}	
-		// **** LASER SPAWN: based off of laser_spawn global flag (set in SysTick ISR) ****************************
-			if(laser_spawn == 1){
-				laser_spawn = 0;					//clear flag
-				ST7735_DrawBitmap(missile_laser.x, missile_laser.y, laserFrame[laserFrame_idx], missile_laser.width, missile_laser.height);
-				firerate_limit_counter = 0;		//reset counter once missile has spawned			 				  
-				missile_laser.status = moving;
-				if(laserFrame_dwell == 10){
-					laserFrame_idx = (laserFrame_idx + 1) % 3;	// increment frame index
-					laserFrame_dwell = 0;	// reset frame dwell counter
-				}
-			}	
-   // **** PLAYER SPRITE HORIZONTAL MOVEMENT by comparing the current ADC sample to the previous ADC value *****
-		if(flag != 0){
-			flag = 0;																			// acknowledge flag
-			Data = ADCMAIL;																// update player position
-			adc_diff = (Data - Prev_adc);									// calculate difference 
-			// if new ADC data is less than 32 of the previous, move player to the left
-			if((adc_diff <= -32) && (player.x - 1) != 0){	
-				adc_diff /= 32;															// convert to pixels
-				for(int i = 0; i > adc_diff; i--){
-					if((player.x - 1) == 0)break;							// left border reached
-					player.x = player.x - 1;									// move player one pixel to the left
-					ST7735_DrawBitmap(player.x, player.y, player.image, player.width, player.height);
-				}		
-			}
-			// move player to the right if new adc data is equal or greater than 32 of previous value
-			else if((adc_diff >= 32) && ((player.x + 1) != 127 - player.width)){
-				adc_diff /= 32;															// convert to pixels
-				for(int i = 0; i < adc_diff; i++){					
-					if((player.x+1) == 127-player.width)break;// right border reached
-					player.x = player.x + 1;									// move player one pixel to the right
-					ST7735_DrawBitmap(player.x, player.y, player.image, player.width, player.height);
-				}
-			}
-			Prev_adc = Data;															// update previous ADC value
-		}//******************************************************************************************************
-		
-		//**** PLAYER COLLISION/GAME OVER
-		
-		
-		// ***** MISSILE MOVEMENT (up by 1 pixel based on movemissile global flag) *******************************************
-		if(movemissileflag == 1){
-			movemissileflag = 0;													//clear flag
-			for(int i = 0; i < 2; i++)
-			{
-				if(missiles[i].status == moving){
-					missiles[i].y--;
-					ST7735_DrawBitmap(missiles[i].x, missiles[i].y, missiles[i].image, missiles[i].width, missiles[i].height);
-				}
-			}
-		}//***************************************************************************************************************
-		
-		// ***** BIG MISSILE MOVEMENT (up by 1 pixel based on moveBigMissile_flag global flag) *******************************************
-		if((missile_LED.status != dead) && (missile_LED.status != dying)){
-			if(moveBigMissile_flag == 1){
-				moveBigMissile_flag = 0;													//clear flag
-				if(missile_LED.status == moving){
-					missile_LED.y--;
-					ST7735_DrawBitmap(missile_LED.x, missile_LED.y, missile_LED.image, missile_LED.width, missile_LED.height);
-				}
-			}		
-		}//***************************************************************************************************************
-		
-		// ***** LASER MOVEMENT (up by 1 pixel based on moveLaser_flag global flag) *******************************************
-		if(missile_laser.status != dead){
-		if(moveLaser_flag == 1){
-				moveLaser_flag = 0;													//clear flag
-				if(missile_laser.status == moving){
-					missile_laser.y--;
-					ST7735_DrawBitmap(missile_laser.x, missile_laser.y, laserFrame[laserFrame_idx], missile_laser.width, missile_laser.height);
-					if(laserFrame_dwell == 10){
-						laserFrame_idx = (laserFrame_idx + 1) % 3;	// increment frame index
-						laserFrame_dwell = 0;	// reset frame dwell counter
-					}else{
-						laserFrame_dwell++;
-					}
-				}
-			}			
-		}//***************************************************************************************************************
-		
-	
-		//**** MISSILE COLLISION/DEATH (Draw over bmps with black rectangle) **************************************************
-		if(disable_player_controls != 1){ // no need to draw over missiles once player already dead
-			// basic missile collision
-			for(int i = 0; i < 2; i++){
-				if(missileCollisionFlag[i] == 1){
-					missileCollisionFlag[i] = 0;	// acknowledge
-					ST7735_FillRect(missiles[i].x, missiles[i].y - missiles[i].height + 1, missiles[i].width, missiles[i].height, 0x0000);
-					missiles[i].status = dead;	// only set status to dead after they have been drawn over
-				}
-			}
-			// big missile collision
-			if(bigMissileCollision_flag == 1){
-					bigMissileCollision_flag = 0;	// acknowledge
-					ST7735_FillRect(missile_LED.x, missile_LED.y - missile_LED.height + 1, missile_LED.width, missile_LED.height, 0x0000);
-					missile_LED.status = dead;	// only set status to dead after they have been drawn over
-				}
-			
-			// laser collision (LASER HAS NO SPRITE COLLISION; DO NOT IMPLEMENT)
-/*			if(laserCollision_flag == 1){
-					laserCollision_flag = 0;	// acknowledge
-					ST7735_FillRect(missile_laser.x, missile_laser.y - missile_laser.height + 1, missile_laser.width, missile_laser.height, 0x0000);
-					missile_laser.status = dead;	// only set status to dead after they have been drawn over
-			}
-*/
-		}
-		//******************************************************************************************************************************
 
-		//**** IF COLLISION FLAG ATTRIBUTE SET FOR ENEMY, DRAW OVER ENEMY AND DRAW FIRST FRAME OF EXPLOSION*******************************************************************************************
-					for(int i = 0; i < 4; i++){	//for each row
-							for(int j = 0; j < 4; j++){//for each enemy
-								//if(wave[wave_number].enemy[i][j].status == dead){ //skip checking enemies that are unspawned or alive
-									if(wave[wave_number].enemy[i][j].collision_flag == 1 && gameOver_flag == 0){// don't draw over enemy if enemy has collided with player
-										wave[wave_number].enemy[i][j].collision_flag = 0;		// acknowledge
-										ST7735_FillRect(wave[wave_number].enemy[i][j].x, wave[wave_number].enemy[i][j].y - wave[wave_number].enemy[i][j].height + 1, wave[wave_number].enemy[i][j].width, wave[wave_number].enemy[i][j].height, 0x0000);
-										wave[wave_number].enemy[i][j].status = dead; //status set to dead once the enemy is drawn over
-										
-										//draw first frame of explosion
-										ST7735_DrawBitmap(explosion_anim[explosion_frame].x, explosion_anim[explosion_frame].y, explosion_anim[explosion_frame].image, explosion_anim[explosion_frame].width, explosion_anim[explosion_frame].height);					
-										explosion_counter = 0; //clear counter
-										explosion_done = 0;		//timer0 starts incrementing explosion_counter in the animation/spawn_delay function
-										explosion_frame++;
-									}
-							//}checking if status is dead does same thing as checking if collision_flag is 1
-						}
-					}
-		//*************************************************************************************************************************************************************************************************
-			
+	
+  while(1){ // START OF GAME ENGINE //
+		
+	//== GAME OVER CHECK IF PLAYER COLLISION WITH ENEMY DETECTED ====================================================================================================================
+			 if(player.status == dying && gameOver_flag == 1){ // run this if the enemy collided with player
+				  gameOverPlayerDeathAnimation(); // only runs this function if enemy collided with player gameOver_flag is set to 1
+					gameOver(); // disables all interrupts except timer1 for sound, displays game over messages and final score, then remain indefinitely in a while loop to freeze final screen
+			 }
+			 else if(gameOver_flag == 1){ // only run this function if enemy has reached bottom of screen (doesn't set player status to dying yet if detected in ISR)
+					gameOverEnemyDeathAnimation();
+					gameOver();
+			 }
+
+
+	//===============================================================================================================================================================================
+		
+		
+	//== ALL TYPES OF MISSILE SPAWNS=================================================================================================================================================================
+	//== Based off of global flags set in SysTick ISR to draw missile bmp, clear flag, reset firerate counter, and CHANGE MISSILE STATUS TO MOVING
+			 // BASIC MISSILE SPAWN (primary missile)
+				  spawnBasicMissile();
 					
-
-
-	//**** EXPLOSION ANIMATIONS (CHECKING FRAMES AND CLEARING EXPLOSIONS ONCE ANIMATION IS DONE) **************************************************************************************************************************************************
-		if(disable_player_controls != 1){ // skip if player already died	
-				if(explosion_done == 0 && explosion_counter >= 1 && explosion_frame < 5){	//only draw next frame if explosion counter is set (125 ms has passed since last frame); if no collosions occur, explosion counter = 0 and explosion frame = 6
-						ST7735_DrawBitmap(explosion_anim[explosion_frame].x, explosion_anim[explosion_frame].y, explosion_anim[explosion_frame].image, explosion_anim[explosion_frame].width, explosion_anim[explosion_frame].height);
-						explosion_counter = 0;
-						explosion_frame++;				//increment frame after drawing previous frame
-				}
-				if(explosion_frame == 5){ //last explosion frame has just been drawn --> clear explosion and set explosion_done flag for timer to stop incrementing counter
-						ST7735_FillRect(explosion_anim[4].x, explosion_anim[4].y - explosion_anim[4].height + 1, explosion_anim[4].width, explosion_anim[4].height, 0x0000);
-						explosion_done = 1;
-						explosion_counter = 0;
-						explosion_frame = 6;  //set to 6 until it is reset to 0 on the next collision
-						
-						if(wave[wave_number].clear == 1){
-								wave[wave_number].clear = 2; //set to 2 once last enemy explosion animation is done
-						}
-				}
-				if(clear_explosion_early == 1){						//clears a previous explosions BMP if another explosion happens to occur before the first is done animating (prevents previous image from staying forever)
-					clear_explosion_early = 0; //clear flag
-					ST7735_FillRect(x_save, y_save - explosion_anim[4].height + 1, explosion_anim[4].width, explosion_anim[4].height, 0x0000);
+			 // BIG MISSILE SPAWN: based off of bigMissile_spawn global flag (set in SysTick ISR)
+				  spawnBigMissile();
+				
+			 // LASER SPAWN: based off of laser_spawn global flag (set in SysTick ISR)
+					spawnLaser();
+	//================================================================================================================================================================================================
+	
 					
-					if(wave[wave_number].clear == 1){
-								wave[wave_number].clear = 2; //set to 2 once last enemy explosion animation is done
-						}
-				}
-		}
+  //== PLAYER HORIZONTAL MOVEMENT by comparing the current ADC sample to the previous ADC value ==========================
+			 if(flag != 0){ //DON'T NEED TO MOVE PLAYER IF NO NEW ADC SAMPLE HAS BEEN READ FROM SYSTICK ISR (aka flag = 0)
+				  movePlayer();
+			 }
+	//======================================================================================================================
+	
+			 
+	//== ALL MISSILE MOVEMENT==========================================================================================================================================================================
+			 // THE THREE MISSILE MOVEMENT FUNCTIONS BELOW CAN BE REPLACED BY THE FUNCTION BELOW:
+				  moveAllMissiles();
+			 
+			 //BASIC MISSILE MOVEMENT (by 1 pixel based on movemissile global flag that is set every 1/80th sec by Timer2 ISR (missile_move periodic task)) 
+				 //moveBasicMissile();
 
-		//**** UPDATE POWERUP POSITION****
-		if((powerup[powerupIdx].status == alive) && (powerup[powerupIdx].x + powerup[powerupIdx].width != 0)){// if power-up has reached left side, kill it
-			ST7735_DrawBitmap(powerup[powerupIdx].x, powerup[powerupIdx].y, powerup[powerupIdx].image, powerup[powerupIdx].width, powerup[powerupIdx].height);
-		}
-		else if(powerup[powerupIdx].status == dying){
-				ST7735_FillRect(powerup[powerupIdx].x, powerup[powerupIdx].y - powerup[powerupIdx].height + 1, powerup[powerupIdx].width, powerup[powerupIdx].height, 0x0000);
-				powerup[powerupIdx].status = dead;
-		}
-
-		
-		//**** DRAW NEW ENEMY POSITION *************************************************************************
-		//KEEP THIS REGARDLESS OF DISABLE_PLAYER_CONTROLS FLAG VALUE
-		for(int i = 0; i < 4; i++){
-					if(wave[wave_number].row_clear[i] == 0){	//only move ith row if the row has not been cleared
-						for(int j = 0; j < 4; j++){
-							if(wave[wave_number].enemy[i][j].status == alive){// do nothing if enemy is dead/unspawned/dying
-								ST7735_DrawBitmap(wave[wave_number].enemy[i][j].x, wave[wave_number].enemy[i][j].y, wave[wave_number].enemy[i][j].image, wave[wave_number].enemy[i][j].width, wave[wave_number].enemy[i][j].height);
-							}
-						}
-					}
-		};// **************************************************************************************************
-
-
-		
-		
-			
-//ADD MESSAGES ABOUT WAVE CLEAR HERE OR SOME DELAY UNTIL NEXT WAVE SPAWNS**************************************************************************	
-																				// no need to print wave cleared text if player already died
-			if(wave[wave_number].clear == 2 && disable_player_controls == 0){ //set to 1 when deadcounter is 16, set to 2 when last enemy explosion ends
-						DisableInterrupts();	// disable interrupts after the wave dies (no movement needed)
-						switch(wave_number){
-							case 0:
-								ST7735_DrawString(4, 3, msg1pt, 0xFFFF);
-								break;
-							case 1:
-								ST7735_DrawString(4, 3, msg2pt, 0xFFFF);
-								break;
-							case 2:
-								ST7735_DrawString(4, 3, msg3pt, 0xFFFF);
+			 //BIG MISSILE MOVEMENT (up by 1 pixel based on moveBigMissile_flag global flag)
+			   //moveBigMissile();
 						
-								break;
-							case 3:
-								ST7735_DrawString(4, 3, msg4pt, 0xFFFF);
-								break;
-							case 4:
-								ST7735_DrawString(4,3, msg5pt, 0xFFFF);	//final boss msg
-							default:
-								
-						//output you win message and display score here
-								break;
-					}
-			
-		//ADD THIS IN LATER-- delay a few seconds, overwrite text on screen, then clear the wave_spawn_done flag and reset current_row_number to 0
-			Delay100ms(20); //POST ON PIAZZA IF WE CAN USE DELAYS IF WE ALREADY HAVE 4 INTERRUPTS (break between waves of enemies)
-			EnableInterrupts();
-			ST7735_FillRect(19, 20, 107, 21, 0x0000);  //clear text
-			current_row_number = 0;
-			wave_spawn_done = 0;
-			wave_number++;			//increment wave_number only if whole wave is dead
-			powerupSpawn = 0;	// clear powerup spawn flag
-			powerupIdx += 1; 		// increment powerup index for next wave
-			for(int i=0; i<4; i++){
-				for(int j=0; j<4; j++){
-					reload_movement_cts(i,j);			//re-initialize the movement counters for the next wave
-				}
-			}
-		}//********************************************************************************************************************************************************
-
-		
-//**** RUNNING SCORE DISPLAY (AS GAME IS PLAYED) ***************************************
-		total_score_copy = total_score; // don't ever change value of the games total score	
-		for(int i = 3; i >= 0; i--){		
-				scorept[i] = ((total_score_copy % 10) + 0x30);	// integer score value is converted to a character array of 4 digits and a null sentinel
-				total_score_copy /= 10;
-		}
-		scorept[4] = 0; // null terminate the last element in the array
-		ST7735_DrawString(0, 0, scorept, 0x07FF);	//draw the score at the top left corner
-//**************************************************************************************
+			 //LASER MOVEMENT (up by 1 pixel based on moveLaser_flag global flag)
+				 //moveLaser();
+	//===============================================================================================================================================================================================
 	
-			
-	//**** NEXT ROW SPAWN (every .5 s) ********************************
-		if(disable_player_controls != 1){ // no need to spawn anything once player already died
-				if(current_row_number == 4){
-					wave_spawn_done = 1; //set global flag
-				}
-				else if(counter_125ms == 24){// ONLY DRAW NEW ROW AFTER 3 SECONDS HAS PASSED
-					counter_125ms = 0;	//reset counter
-					for(int j = 0; j < 4; j++){
-						ST7735_DrawBitmap(wave[wave_number].enemy[current_row_number][j].x, wave[wave_number].enemy[current_row_number][j].y, wave[wave_number].enemy[current_row_number][j].image, wave[wave_number].enemy[current_row_number][j].width, wave[wave_number].enemy[current_row_number][j].height);
-						wave[wave_number].enemy[current_row_number][j].status = alive; //each sprite in this row is now alive once spawned
-					}
-					wave[wave_number].row_spawn[current_row_number] = 1;
-					current_row_number++;	//increment spawn row # for next second
-				}//**************************************************************
-		}
-		
-}//END OF GAME ENGINE
-	
-}//END OF MAIN======================================================================================================================================================================================
-//==================================================================================================================================================================================================
-
-
-
-
-
-
-
-
-
-
-
-
-//SYSTICK ISR START=================================================================================================================================================================================
-//==================================================================================================================================================================================================
-void SysTick_Handler(void){ // every 16.67 ms
-	
-//**** PLAYER HORIZONTAL MOVEMENT: get ADC reading from slideport and save to mailbox *********
- if(disable_player_controls != 1){	//don't take adc readings if player has died
-		ADCMAIL = ADC_In();	// save the ADC data to a mailbox (global variable)
-		flag = 1;						// set the semaphore flag 
- }
-//*********************************************************************************************
-
-
-//**** ENEMY + PLAYER COLLISION (GAME OVER)
-	if(disable_player_controls != 1){ // don't need to check for collision again if enemy already died
-			for(int k = 0; k < 4; k++){ //for each of 4 rows
-				if(wave[wave_number].row_clear[k] == 0){ //only check kth row if clear flag not set
-					for(int j = 0; j < 4; j++){
-						if(wave[wave_number].enemy[k][j].status == alive){	// skip collision detection if enemy is dead
-							// check vertical overlap (top)
-							if((((player.y < wave[wave_number].enemy[k][j].y) && (player.y > (wave[wave_number].enemy[k][j].y - wave[wave_number].enemy[k][j].height))) ||
-							// check vertical overlap (bottom)
-							(((player.y - player.height) < wave[wave_number].enemy[k][j].y) && ((player.y - player.height) > (wave[wave_number].enemy[k][j].y - wave[wave_number].enemy[k][j].height)))) &&
-							// check horizontal overlap (right)
-							(((player.x > wave[wave_number].enemy[k][j].x) && (player.x < (wave[wave_number].enemy[k][j].x + wave[wave_number].enemy[k][j].width))) ||	
-							// check horizontal overlap (left)
-							((player.x + player.width > wave[wave_number].enemy[k][j].x) && (player.x + player.width < (wave[wave_number].enemy[k][j].x + wave[wave_number].enemy[k][j].width))))){
-								player.status = dying;  		// update enemy sprite status to DYING BUT NOT DEAD
-								
-								collided_enemy_i = k; // save the row, col information of the sprite that ran into the player
-								collided_enemy_j = j;
-								gameOver_flag = 1;  // NOW 1 MEANS ENEMY COLLISION WITH PLAYER OCCURED--> GOING TO SET THE FLAG TO 2 AFTER I IMPLEMENT MY IDEA (FREEZE DEATH FRAME, FLASH 3 TIMES)
+						
+	//== ALL MISSILE FILLING/DEATH (Fill missiles if their collision flag has been set in SysTick ISR) ===================================
+			// Basic missile fill (if the collison flag is set)
+			   fillBasicMissile();
 							
-								explosion_frame = 0;
-								explosion_counter = 1;
-								if(explosion_done == 0){		//if previous explosion is not done yet once another collosion occurs, set clear_explosion_early flag and save previous coordinates before overwriting
-									clear_explosion_early = 1;
-									x_save = explosion_anim[4].x;
-									y_save = explosion_anim[4].y;
-								}
-								for(int i = 0; i < 5; i++){
-									explosion_anim[i].status = alive;
-									explosion_anim[i].x = (player.x - 1); //center explosion at middle of player sprite
-									explosion_anim[i].y = (player.y); //explosion will always be at the bottom of the screen
-								}								
-							}
-						}
-					}
-				}
-			}
-		}
-		//else{ //check for previous explosions that need clearing if about to play final dramatic explosion // CAN TAKE OUT ONCE NEW 10 FRAME EXPLOSION IS ADDED
-			//if(explosion_done == 0){		//if previous explosion is not done yet once another collosion occurs, set clear_explosion_early flag and save previous coordinates before overwriting
-					//clear_explosion_early = 1;
-					//x_save = explosion_anim[4].x;
-					//y_save = explosion_anim[4].y;
-			//}
-		//}
+			// Big missile fill (if the collison flag is set)
+			   fillBigMissile();
+	//=====================================================================================================================================
+
+				
+	//== FILL ENEMY UPON COLLISION AND DRAW FIRST EXPLOSION_ANIM FRAME=========
+			 fillEnemyDrawExplosionFrame1();
+	//=========================================================================================================
+
+				
+	//== EXPLOSION ANIMATION FRAME UPDATES (CHECKING FRAMES AND CLEARING EXPLOSIONS ONCE ANIMATION IS DONE) =========================================================================================================
+		   explosionAnimationUpdate();
+	//===============================================================================================================================================================================================================
+		
+
+				
+	//== MOVE POWERUP BOX (only if the powerup sprite status is alive and has not exited the left side of LCD screen) =========================================================
+			 movePowerup();
+	//========================================================================================================================================================================
+
+
+	//== MOVE ENEMIES BY DRAWING NEW ENEMY POSITION (COORDINATES INCREMENTED IN SYSTICK ISR) ======
+	//== only moves enemy sprites whose statuses are == alive
+			 moveEnemies();
+	//=============================================================================================
+
+		
+	//== WAVE CLEARED MESSAGES, DISABLE INTERRUPTS, DELAYS, AND VARIABLE RELOADS (IF CLEAR ATTRIBUTE == 2 FOR CURRENT WAVE STRUCT) =========================
+			 if(wave[wave_number].clear == 2){ //set to 1 when deadcounter is 16, set to 2 when last enemy explosion ends
+					waveClearedTransition(); // only do this transition after last enemy in the wave dies and explodes (ALL INTERRUPTS DISABLED IN THIS FUNCTION!!!)
+			 }
+	//======================================================================================================================================================
+
+		
+	//== RUNNING SCORE DISPLAY (AS GAME IS PLAYED) ======
+			 printCurrentScore();
+	//===================================================
 	
-//**** BUTTON CHECKING: CHECK PORT E PIN 0 (PRIMARY FIRE BUTTON) TO DETERMINE MISSILE SPAWN******************************************************************************
-//**** PLAYER MISSILE FIRE LIMITS: only 2 missiles allowed onscreen at a time, 250 ms delay between shots, missile images can never overlap (minimum of 5 pixels apart)
-		if(PE0 == 1 && firerate_limit_counter >=2 && disable_player_controls == 0){ //only sets missile spawn flags if at least 250 ms has passed since the last missile was fired
-				//SW0 = PE0;				// read data to clear Port E data
-				if(missiles[0].status == dead){// case for if 1st missile dead/offscreen
-					missiles[0].x = (player.x + player.width/2) - missiles[0].width/2;			// assign starting x pos of missile
-					missiles[0].y = (player.y - player.height);															// assign starting y pos of missile	
-					m1spawn = 1;
-					
-						if(sound_pointer != silence){ // missile fire sound can interrupt prev sound if conflicting, resume prev sound after laser sound is done
-							sound_pointer_save = sound_pointer;
-							sound_pointer = laser5;
-							interrupting_laser_sound_flag = 1;
-							sound_length_save = sound_length;
-							sound_length = 3600;
-							sound_index_save = sound_index; // save sound index of prev sound before resetting to 0
-							sound_index = 0;						
-						}
-						else{ // if sound pointer set to silence when missile fire button pressed, just set to laser sound
-							sound_pointer = laser5;
-							sound_length = 3600;
-							sound_index = 0;
-						}
-				}															
-				else if((missiles[0].y <= 134) && (missiles[0].status == moving) && (missiles[1].status == dead)){	// case for if 2nd missile dead/offscreen and at least 5 pixels of separation between successesive missiles						
-						missiles[1].x = (player.x + player.width/2) - missiles[1].width/2;			// assign starting x pos of missile
-						missiles[1].y = (player.y - player.height);															// assign starting y pos of missile	
-						m2spawn = 1;
-						
-						if(sound_pointer != silence){ // missile fire sound can interrupt explosion sound if conflicting, resume explosion sound after laser sound is done
-							sound_pointer_save = sound_pointer;
-							sound_pointer = laser5;
-							interrupting_laser_sound_flag = 1;
-							sound_length_save = sound_length;
-							sound_length = 3600;
-							sound_index_save = sound_index; // save sound index of prev sound before resetting to 0
-							sound_index = 0;
-						}
-						else{ // if sound pointer set to silence when missile fire button pressed, just set to laser sound
-								sound_pointer = laser5;
-								sound_length = 3600;
-								sound_index = 0;
-						}
-				}
-		}
-//**** BUTTON CHECKING: CHECK PORT E PIN 1 (SECONDARY FIRE BUTTON) TO DETERMINE MISSILE SPAWN******************************************************************************
-		if(((PE1 >> 1) == 1) && (disable_player_controls == 0) && (upgrade != unequipped)){
-			//SW1 = PE1; // read from port e pin 1 to clear the data
-			// fire big missile
-			if((upgrade == led) && (bigMissile_counter >= 4) && (powerup_ct[bigMissile_Idx] > 0)){
-				if(missile_LED.status == dead){// case for if LED dead/offscreen
-					missile_LED.x = (player.x + player.width/2) - missile_LED.width/2;			// assign starting x pos of missile
-					missile_LED.y = (player.y - player.height);															// assign starting y pos of missile	
-					bigMissile_spawn = 1;
-					powerup_ct[bigMissile_Idx]--;	// decrement charge count
-					if(powerup_ct[bigMissile_Idx] == 0){
-						upgrade = unequipped;
-						//upgrade_bigMissile_flag = 0; // unequip big missile
-					}
-					if(sound_pointer != silence){ // missile fire sound can interrupt prev sound if conflicting, resume prev sound after laser sound is done
-						sound_pointer_save = sound_pointer;
-						sound_pointer = laser5;
-						interrupting_laser_sound_flag = 1;
-						sound_length_save = sound_length;
-						sound_length = 3600;
-						sound_index_save = sound_index; // save sound index of prev sound before resetting to 0
-						sound_index = 0;						
-					}
-					else{ // if sound pointer set to silence when missile fire button pressed, just set to laser sound
-						sound_pointer = laser5;
-						sound_length = 3600;
-						sound_index = 0;
-					}
-				}															
-			}
-			// fire laser
-			else if((upgrade == laser) && (laser_counter >= 5) && (powerup_ct[laser_Idx] > 0)){
-				if(missile_laser.status == dead){// case for if LED dead/offscreen
-					missile_laser.x = (player.x + player.width/2) - missile_laser.width/2;			// assign starting x pos of missile
-					missile_laser.y = (player.y - player.height);															// assign starting y pos of missile	
-					laser_spawn = 1;
-					powerup_ct[laser_Idx]--;	// decrement charge count
-					if(powerup_ct[laser_Idx] == 0){
-						upgrade = unequipped;
-						//upgrade_laser_flag = 0; // unequip laser
-					}
-					if(sound_pointer != silence){ // missile fire sound can interrupt prev sound if conflicting, resume prev sound after laser sound is done
-						sound_pointer_save = sound_pointer;
-						sound_pointer = laser5;
-						interrupting_laser_sound_flag = 1;
-						sound_length_save = sound_length;
-						sound_length = 3600;
-						sound_index_save = sound_index; // save sound index of prev sound before resetting to 0
-						sound_index = 0;						
-					}
-					else{ // if sound pointer set to silence when missile fire button pressed, just set to laser sound
-						sound_pointer = laser5;
-						sound_length = 3600;
-						sound_index = 0;
-					}
-				}
-			}		
-			else if((upgrade == waveclear) && (powerup_ct[waveClear_Idx] > 0)){// waveclear only has 1 charge
-				powerup_ct[waveClear_Idx]--;	// decrement charge count
-				if(powerup_ct[waveClear_Idx] == 0){
-						upgrade = unequipped;
-						//upgrade_waveClear_flag = 0; // unequip waveclear
-					}
-				if(sound_pointer != silence){ // missile fire sound can interrupt prev sound if conflicting, resume prev sound after laser sound is done
-						sound_pointer_save = sound_pointer;
-						sound_pointer = laser5;
-						interrupting_laser_sound_flag = 1;
-						sound_length_save = sound_length;
-						sound_length = 3600;
-						sound_index_save = sound_index; // save sound index of prev sound before resetting to 0
-						sound_index = 0;						
-				}
-				else{ // if sound pointer set to silence when missile fire button pressed, just set to laser sound
-					sound_pointer = laser5;
-					sound_length = 3600;
-					sound_index = 0;
-				}
-				for(int k = 0; k < 4; k++){ //for each of 4 rows
-					if(wave[wave_number].row_clear[k] == 0){ //only check kth row if clear flag not set
-						for(int j = 0; j < 4; j++){
-							if(wave[wave_number].enemy[k][j].status == alive){	// skip collision detection if enemy is dead
-										wave[wave_number].enemy[k][j].status = dying;  		// update enemy sprite status to DYING INSTEAD OF DEAD
-										wave[wave_number].enemy[k][j].collision_flag = 1;	// set collision flag
-										total_score += wave[wave_number].enemy[k][j].score; // add the dying enemy's score value to the total_score global variable
-										explosion_frame = 0;
-										explosion_counter = 1;
-										if(explosion_done == 0){		//if previous explosion is not done yet once another collosion occurs, set clear_explosion_early flag and save previous coordinates before overwriting
-											clear_explosion_early = 1;
-											x_save = explosion_anim[4].x;
-											y_save = explosion_anim[4].y;
-										}
-										for(int i = 0; i < 5; i++){
-											explosion_anim[i].status = alive;
-											explosion_anim[i].x = (wave[wave_number].enemy[k][j].x - 2); //center explosion at middle of enemy sprite
-											explosion_anim[i].y = (wave[wave_number].enemy[k][j].y + 10);
-										}	
-									sound_pointer = explosion2; //set current_sound to explosion only if enemy health becomes 0 (replace w explosion1 if new sound doesn't fit animiation)
-									sound_length = 6919;				//set sound length (<-- change to 6919 if using explosion with louder volume
-									sound_index = 0;						//reset index
-							}// only check enemies that are alive
-						}//iterate for each of 4 enemies
-						waveClearDone_flag = 1;	// flag for possible use
-						break;
-					}//only check uncleared rows
-				}//iterate for each of 4 rows
-			}
-		}			
-//***********************************************************************************************************************************************************************
-
-
-//**** POWERUP-MISSILES COLLISION DETECTION
-	if(disable_player_controls != 1){ // no need to check for collision if player already died
-		// basic missile check
-		for(int i = 0; i < 2; i++){
-			if(missiles[i].status != dead){
-				if(powerup[powerupIdx].status == alive){	// skip collision detection if powerup is dead
-					// check vertical overlap (top)
-					if((((missiles[i].y < powerup[powerupIdx].y) && (missiles[i].y > (powerup[powerupIdx].y - powerup[powerupIdx].height))) ||
-					// check vertical overlap (bottom)
-					(((missiles[i].y - missiles[i].height) < powerup[powerupIdx].y) && ((missiles[i].y - missiles[i].height) > (powerup[powerupIdx].y - powerup[powerupIdx].height)))) &&
-					// check horizontal overlap (right)
-					(((missiles[i].x > powerup[powerupIdx].x) && (missiles[i].x < (powerup[powerupIdx].x + powerup[powerupIdx].width))) ||	
-					// check horizontal overlap (left)
-					((missiles[i].x + missiles[i].width > powerup[powerupIdx].x) && (missiles[i].x + missiles[i].width < (powerup[powerupIdx].x + powerup[powerupIdx].width))))){
-						powerup[powerupIdx].status = dying;
-						if(powerup[powerupIdx].image == power_LED){
-							upgrade = led;	// enable secondary attack (big missile)
-							//upgrade_bigMissile_flag = 1;
-							//upgrade_laser_flag = 0;
-							//upgrade_waveClear_flag = 0;
-							powerup_ct[bigMissile_Idx] = 3;	// set 3 charges
-						}else if(powerup[powerupIdx].image == power_laser){
-							upgrade = laser;// enable secondary attack (laser)
-							//upgrade_laser_flag = 1;
-							//upgrade_bigMissile_flag = 0;
-							//upgrade_waveClear_flag = 0;
-							powerup_ct[laser_Idx] = 2;	// set 2 charges
-						}else if(powerup[powerupIdx].image == power_waveClear){
-							upgrade = waveclear;	// enable secondary attack (waveClear)
-							//upgrade_waveClear_flag = 1;
-							//upgrade_laser_flag = 0;
-							//upgrade_bigMissile_flag = 0;
-							powerup_ct[waveClear_Idx] = 1;				// set 1 charge
-						}
-						missiles[i].status = dying;	// update missile status to DYING NOT DEAD
-						missileCollisionFlag[i] = 1;// set collision flag
-					}
-
-				}//end of if-statement for collision check on all 4 sides
-			}// skip is basic missile is dead
-		}// check both basic missiles
 		
-		// big missile check
-		if(missile_LED.status != dead){
-			if(powerup[powerupIdx].status == alive){	// skip collision detection if powerup is dead
-				// check vertical overlap (top)
-				if((((missile_LED.y < powerup[powerupIdx].y) && (missile_LED.y > (powerup[powerupIdx].y - powerup[powerupIdx].height))) ||
-				// check vertical overlap (bottom)
-				(((missile_LED.y - missile_LED.height) < powerup[powerupIdx].y) && ((missile_LED.y - missile_LED.height) > (powerup[powerupIdx].y - powerup[powerupIdx].height)))) &&
-				// check horizontal overlap (right)
-				(((missile_LED.x > powerup[powerupIdx].x) && (missile_LED.x < (powerup[powerupIdx].x + powerup[powerupIdx].width))) ||	
-				// check horizontal overlap (left)
-				((missile_LED.x + missile_LED.width > powerup[powerupIdx].x) && (missile_LED.x + missile_LED.width < (powerup[powerupIdx].x + powerup[powerupIdx].width))))){
-					powerup[powerupIdx].status = dying;
-					if(powerup[powerupIdx].image == power_LED){
-						upgrade = led;	// enable secondary attack (big missile)
-						//upgrade_bigMissile_flag = 1;
-						//upgrade_laser_flag = 0;
-						//upgrade_waveClear_flag = 0;
-						powerup_ct[bigMissile_Idx] = 4;	// set 3 charges
-					}else if(powerup[powerupIdx].image == power_laser){
-						missile_laser.status = dead;
-						upgrade = laser;// enable secondary attack (laser)
-						//upgrade_laser_flag = 1;
-						//upgrade_bigMissile_flag = 0;
-						//upgrade_waveClear_flag = 0;
-						powerup_ct[laser_Idx] = 3;	// set 2 charges
-					}else if(powerup[powerupIdx].image == power_waveClear){
-						upgrade = waveclear;	// enable secondary attack (waveClear)
-						//upgrade_waveClear_flag = 1;
-						//upgrade_laser_flag = 0;
-						//upgrade_bigMissile_flag = 0;
-						powerup_ct[waveClear_Idx] = 2;				// set 1 charge
-					}
-					missile_LED.status = dead;	// update missile status to DYING NOT DEAD
-					bigMissileCollision_flag = 1;// set collision flag
-				}
-
-			}//end of if-statement for collision check on all 4 sides
-		}// skip is big missile is dead
-		
-		// laser check
-		if(missile_laser.status != dead){
-			if(powerup[powerupIdx].status == alive){	// skip collision detection if powerup is dead
-				// check vertical overlap (top)
-				if((((missile_laser.y < powerup[powerupIdx].y) && (missile_laser.y > (powerup[powerupIdx].y - powerup[powerupIdx].height))) ||
-				// check vertical overlap (bottom)
-				(((missile_laser.y - missile_laser.height) < powerup[powerupIdx].y) && ((missile_laser.y - missile_laser.height) > (powerup[powerupIdx].y - powerup[powerupIdx].height)))) &&
-				// check horizontal overlap (right)
-				(((missile_laser.x > powerup[powerupIdx].x) && (missile_laser.x < (powerup[powerupIdx].x + powerup[powerupIdx].width))) ||	
-				// check horizontal overlap (left)
-				((missile_laser.x + missile_laser.width > powerup[powerupIdx].x) && (missile_laser.x + missile_laser.width < (powerup[powerupIdx].x + powerup[powerupIdx].width))))){
-					powerup[powerupIdx].status = dying;
-					if(powerup[powerupIdx].image == power_LED){
-						upgrade = led;	// enable secondary attack (big missile)
-						//upgrade_bigMissile_flag = 1;
-						//upgrade_laser_flag = 0;
-						//upgrade_waveClear_flag = 0;
-						powerup_ct[bigMissile_Idx] = 4;	// set 3 charges
-					}else if(powerup[powerupIdx].image == power_laser){
-						upgrade = laser;// enable secondary attack (laser)
-						//upgrade_laser_flag = 1;
-						//upgrade_bigMissile_flag = 0;
-						//upgrade_waveClear_flag = 0;
-						powerup_ct[laser_Idx] = 3;	// set 2 charges
-					}else if(powerup[powerupIdx].image == power_waveClear){
-						upgrade = waveclear;	// enable secondary attack (waveClear)
-						//upgrade_waveClear_flag = 1;
-						//upgrade_laser_flag = 0;
-						//upgrade_bigMissile_flag = 0;
-						powerup_ct[waveClear_Idx] = 2;				// set 1 charge
-					}
-				}
-			}//end of if-statement for collision check on all 4 sides
-		}// skip is laser is dead
-	}
-		
-//**** COLLISION DETECTION (BETWEEN MISSILES AND ENEMIES) ***********************************************************************************************************************************************
-	if(disable_player_controls != 1){ // no need to check for collision if player already died
-		// basic missile collision detection
-		for(int i = 0; i < 2; i++){
-			if(missiles[i].status == moving){
-				for(int k = 0; k < 4; k++){ //for each of 4 rows
-					if(wave[wave_number].row_clear[k] == 0){ //only check kth row if clear flag not set
-						for(int j = 0; j < 4; j++){
-							if(wave[wave_number].enemy[k][j].status == alive){	// skip collision detection if enemy is dead
-								// check vertical overlap (top)
-								if((((missiles[i].y < wave[wave_number].enemy[k][j].y) && (missiles[i].y > (wave[wave_number].enemy[k][j].y - wave[wave_number].enemy[k][j].height))) ||
-								// check vertical overlap (bottom)
-								(((missiles[i].y - missiles[i].height) < wave[wave_number].enemy[k][j].y) && ((missiles[i].y - missiles[i].height) > (wave[wave_number].enemy[k][j].y - wave[wave_number].enemy[k][j].height)))) &&
-								// check horizontal overlap (right)
-								(((missiles[i].x > wave[wave_number].enemy[k][j].x) && (missiles[i].x < (wave[wave_number].enemy[k][j].x + wave[wave_number].enemy[k][j].width))) ||	
-								// check horizontal overlap (left)
-								((missiles[i].x + missiles[i].width > wave[wave_number].enemy[k][j].x) && (missiles[i].x + missiles[i].width < (wave[wave_number].enemy[k][j].x + wave[wave_number].enemy[k][j].width))))){
-									wave[wave_number].enemy[k][j].health -= 1;
-									if(wave[wave_number].enemy[k][j].health == 0){
-										wave[wave_number].enemy[k][j].status = dying;  		// update enemy sprite status to DYING INSTEAD OF DEAD
-										wave[wave_number].enemy[k][j].collision_flag = 1;	// set collision flag
-										total_score += wave[wave_number].enemy[k][j].score; // add the dying enemy's score value to the total_score global variable
-										explosion_frame = 0;
-										explosion_counter = 1;
-										if(explosion_done == 0){		//if previous explosion is not done yet once another collosion occurs, set clear_explosion_early flag and save previous coordinates before overwriting
-											clear_explosion_early = 1;
-											x_save = explosion_anim[4].x;
-											y_save = explosion_anim[4].y;
-										}
-										for(int i = 0; i < 5; i++){
-											explosion_anim[i].status = alive;
-											explosion_anim[i].x = (wave[wave_number].enemy[k][j].x - 2); //center explosion at middle of enemy sprite
-											explosion_anim[i].y = (wave[wave_number].enemy[k][j].y + 10);
-										}	
-									sound_pointer = explosion2; //set current_sound to explosion only if enemy health becomes 0 (replace w explosion1 if new sound doesn't fit animiation)
-									sound_length = 6919;				//set sound length (<-- change to 6919 if using explosion with louder volume
-									sound_index = 0;						//reset index
-										
-									}//end of if-statement for health == 0
-									else{	// different sound effect if enemy health not reduced to 0
-										sound_pointer = enemyoof;	
-										sound_length = 2672;
-										sound_index = 0;
-									}
-									missiles[i].status = dying;	// update missile status to DYING NOT DEAD
-									missileCollisionFlag[i] = 1;// set collision flag
-								}//end of if-statement for collision check on all 4 sides
-							}
-						}//iterate for each of 4 enemies
-					}//only check uncleared rows
-				}//iterate for each of 4 rows
-			}
-		}//end of basic missile collision detection*****************************************
-		
-		// big missile collision detection
-		if(missile_LED.status == moving){
-			for(int k = 0; k < 4; k++){ //for each of 4 rows
-				if(wave[wave_number].row_clear[k] == 0){ //only check kth row if clear flag not set
-					for(int j = 0; j < 4; j++){
-						if(wave[wave_number].enemy[k][j].status == alive){	// skip collision detection if enemy is dead
-							// check vertical overlap (top)
-							if((((missile_LED.y < wave[wave_number].enemy[k][j].y) && (missile_LED.y > (wave[wave_number].enemy[k][j].y - wave[wave_number].enemy[k][j].height))) ||
-							// check vertical overlap (bottom)
-							(((missile_LED.y - missile_LED.height) < wave[wave_number].enemy[k][j].y) && ((missile_LED.y - missile_LED.height) > (wave[wave_number].enemy[k][j].y - wave[wave_number].enemy[k][j].height)))) &&
-							// check horizontal overlap (right)
-							(((missile_LED.x > wave[wave_number].enemy[k][j].x) && (missile_LED.x < (wave[wave_number].enemy[k][j].x + wave[wave_number].enemy[k][j].width))) ||	
-							// check horizontal overlap (left)
-							((missile_LED.x + missile_LED.width > wave[wave_number].enemy[k][j].x) && (missile_LED.x + missile_LED.width < (wave[wave_number].enemy[k][j].x + wave[wave_number].enemy[k][j].width))))){
-								wave[wave_number].enemy[k][j].health -= 1;
-								if(wave[wave_number].enemy[k][j].health == 0){
-									wave[wave_number].enemy[k][j].status = dying;  		// update enemy sprite status to DYING INSTEAD OF DEAD
-									wave[wave_number].enemy[k][j].collision_flag = 1;	// set collision flag
-									total_score += wave[wave_number].enemy[k][j].score; // add the dying enemy's score value to the total_score global variable
-									explosion_frame = 0;
-									explosion_counter = 1;
-									if(explosion_done == 0){		//if previous explosion is not done yet once another collosion occurs, set clear_explosion_early flag and save previous coordinates before overwriting
-										clear_explosion_early = 1;
-										x_save = explosion_anim[4].x;
-										y_save = explosion_anim[4].y;
-									}
-									for(int i = 0; i < 5; i++){
-										explosion_anim[i].status = alive;
-										explosion_anim[i].x = (wave[wave_number].enemy[k][j].x - 2); //center explosion at middle of enemy sprite
-										explosion_anim[i].y = (wave[wave_number].enemy[k][j].y + 10);
-									}	
-								sound_pointer = explosion2; //set current_sound to explosion only if enemy health becomes 0 (replace w explosion1 if new sound doesn't fit animiation)
-								sound_length = 6919;				//set sound length (<-- change to 6919 if using explosion with louder volume
-								sound_index = 0;						//reset index
-									
-								}//end of if-statement for health == 0
-								else{	// different sound effect if enemy health not reduced to 0
-									sound_pointer = enemyoof;	
-									sound_length = 2672;
-									sound_index = 0;
-								}
-								missile_LED.status = dying;	// update missile status to DYING NOT DEAD
-								bigMissileCollision_flag = 1;// set collision flag		
-							}//end of if-statement for collision check on all 4 sides
-						}
-					}//iterate for each of 4 enemies
-				}//only check uncleared rows
-			}//iterate for each of 4 rows
-		}//end of big missile collision detection*****************************************
-		
-		// laser collision detection
-		if(missile_laser.status == moving){
-			for(int k = 0; k < 4; k++){ //for each of 4 rows
-				if(wave[wave_number].row_clear[k] == 0){ //only check kth row if clear flag not set
-					for(int j = 0; j < 4; j++){
-						if(wave[wave_number].enemy[k][j].status == alive){	// skip collision detection if enemy is dead
-							// check vertical overlap (top)
-							if((((missile_laser.y < wave[wave_number].enemy[k][j].y) && (missile_laser.y > (wave[wave_number].enemy[k][j].y - wave[wave_number].enemy[k][j].height))) ||
-							// check vertical overlap (bottom)
-							(((missile_laser.y - missile_laser.height) < wave[wave_number].enemy[k][j].y) && ((missile_laser.y - missile_laser.height) > (wave[wave_number].enemy[k][j].y - wave[wave_number].enemy[k][j].height)))) &&
-							// check horizontal overlap (right)
-							(((missile_laser.x > wave[wave_number].enemy[k][j].x) && (missile_laser.x < (wave[wave_number].enemy[k][j].x + wave[wave_number].enemy[k][j].width))) ||	
-							// check horizontal overlap (left)
-							((missile_laser.x + missile_laser.width > wave[wave_number].enemy[k][j].x) && (missile_laser.x + missile_laser.width < (wave[wave_number].enemy[k][j].x + wave[wave_number].enemy[k][j].width))))){
-								wave[wave_number].enemy[k][j].health -= 1;
-								if(wave[wave_number].enemy[k][j].health == 0){
-									wave[wave_number].enemy[k][j].status = dying;  		// update enemy sprite status to DYING INSTEAD OF DEAD
-									wave[wave_number].enemy[k][j].collision_flag = 1;	// set collision flag
-									total_score += wave[wave_number].enemy[k][j].score; // add the dying enemy's score value to the total_score global variable
-									explosion_frame = 0;
-									explosion_counter = 1;
-									if(explosion_done == 0){		//if previous explosion is not done yet once another collosion occurs, set clear_explosion_early flag and save previous coordinates before overwriting
-										clear_explosion_early = 1;
-										x_save = explosion_anim[4].x;
-										y_save = explosion_anim[4].y;
-									}
-									for(int i = 0; i < 5; i++){
-										explosion_anim[i].status = alive;
-										explosion_anim[i].x = (wave[wave_number].enemy[k][j].x - 2); //center explosion at middle of enemy sprite
-										explosion_anim[i].y = (wave[wave_number].enemy[k][j].y + 10);
-									}	
-								sound_pointer = explosion2; //set current_sound to explosion only if enemy health becomes 0 (replace w explosion1 if new sound doesn't fit animiation)
-								sound_length = 6919;				//set sound length (<-- change to 6919 if using explosion with louder volume
-								sound_index = 0;						//reset index
-									
-								}//end of if-statement for health == 0
-								else{	// different sound effect if enemy health not reduced to 0
-									sound_pointer = enemyoof;	
-									sound_length = 2672;
-									sound_index = 0;
-								}	
-							}//end of if-statement for collision check on all 4 sides
-						}
-					}//iterate for each of 4 enemies
-				}//only check uncleared rows
-			}//iterate for each of 4 rows
-		}//end of big missile collision detection*****************************************
-	}// end of disable player control flag if-check
+	//== NEXT ROW SPAWN (every 3 s) ====
+		   spawnNextRow();
+	//==================================
+	}//END OF GAME ENGINE
+	
+}//END OF MAIN==========================================================================================================================================================================================================
+//======================================================================================================================================================================================================================
+//======================================================================================================================================================================================================================
 
 
-//**** POWERUP MOVEMENT ****
-	// powerup spawn
-	if(powerupSpawn == 0){// if powerup has not yet spawned
-		powerup[powerupIdx].status = alive;
-		powerupSpawn = 1;	// set flag
-	}
-	// update powerup position
-	if(powerup[powerupIdx].status == alive){
-		if((powerup[powerupIdx].x + powerup[powerupIdx].width) <= 0){// if power-up has reached left side, kill it
-			powerup[powerupIdx].status = dead;
-		}else{
-			powerup[powerupIdx].x -=1;	// else, move power-up left
-		}
-	}	
 
-		
-//**** ENEMY MOVEMENT DECISIONS **************************************************************************************************************************
-// MOVE ENEMIES REGARDLESS OF DISABLE_PLAYER_CONTROLS FLAG VALUE
-		for(int i = 0; i < 4; i++){ // check each row
-			// enemy wave movement
-				if(wave[wave_number].row_clear[i] == 0 && wave[wave_number].row_spawn[i] == 1){//skip movement decision if ith row is cleared or not spawned yet
-						for(int j = 0; j<4; j++){ // check each enemy in the ith row
-								if(wave[wave_number].enemy[i][j].status == alive){ // only move enemies that are alive
-										if(moveRightInit_ct[i][j] > 0){// row of enemies initially moves 26 pixels to right right from center
-														if(wave[wave_number].enemy[i][j].image == enemy_keil){
-															wave[wave_number].enemy[i][j].x += 2; // motor enemies move 2 pixels right(faster speed)
-														}
-														else
-														{
-															wave[wave_number].enemy[i][j].x += 1; // any other enemy moves 1 pixel right
-														}
-												moveRightInit_ct[i][j]--;
-												if(moveRightInit_ct[i][j] == 0){// if max right position reached, set count to move down (on the right side)
-														moveDownR_ct[i][j] = 10;
-												}
-										}	
-										else if(moveRight_ct[i][j] > 0){	// move row of enemies right
-												moveEnemyRight(wave_number, i, j); // increment enemy's x position to the right depending on its speed attribute
-												moveRight_ct[i][j]--;
-												if(moveRight_ct[i][j] == 0){		// if right border reached, set count to move down (on the right side)
-													moveDownR_ct[i][j] = 10;
-												}
-										}
-										else if(moveDownR_ct[i][j] > 0){	// move row of enemies down (on the right side)
-												moveEnemyDown(wave_number, i, j); // decrement enemy's y position by 1 pixel regardless of speed (steppermotor enemy slows down at the walls)
-												moveDownR_ct[i][j]--;
-												if(moveDownR_ct[i][j] == 0){		// if row has moved down 10 pixels, set count to move left
-													moveLeft_ct[i][j] = 52/(wave[wave_number].enemy[i][j].speed); // movement reload counter is dependent on the enemy's speed attribute (for motor: moves 2 pixels at a time, 26 times)
-												}
-										}	
-										else if(moveLeft_ct[i][j] > 0){		// move row of enemies left
-												moveEnemyLeft(wave_number, i, j); // decrement enemy's x position to the left depending on its speed attribute
-												moveLeft_ct[i][j]--;
-												if(moveLeft_ct[i][j] == 0){			// if left border reached, set count to move down (on the left side)
-													moveDownL_ct[i][j] = 10;
-												}
-										}
-										else if(moveDownL_ct[i][j] > 0){	// if row has moved down 10 pixels, set count to move right
-												moveEnemyDown(wave_number, i, j); // decrement enemy's y position by 1 pixel regardless of speed (steppermotor enemy slows down at the walls)
-												moveDownL_ct[i][j]--;
-												if(moveDownL_ct[i][j] == 0){		// if row has moved down 10 pixels, set count to move right
-													moveRight_ct[i][j] = 52/(wave[wave_number].enemy[i][j].speed);  // movement reload counter is dependent on the enemy's speed attribute (for motor: moves 2 pixels at a time, 26 times)
-												}
-										}
-										
-								}//inner if_statement (skip to here is enemy is not alive yet aka either dead or unspawned)
-						}//j-loop... iterate for each enemy
-				}//if-statement (skip ith row  if row is cleared or not spawned)
-		}//outer i-loop... iterate for each row
-	//***************************************************************************************************************************************************
 
-					
-					
-//**** Update row clear attributes and wave clear attributes after enemies have been written over(depending on current wave #)***************
-		if(disable_player_controls != 1){	// no need to add up dead enemies after player already died and did not successfuly clear the wave
-			for(int i=0; i<4; i++){ //iterate for each row
-					for(int j=0; j<4; j++){ //iterate for each enemy
-							if(wave[wave_number].enemy[i][j].status == dead){
-								deadcounter++;
-							}
-					}
-					if(deadcounter == 4)
-					{
-						wave[wave_number].row_clear[i] = 1;			//set atttribute flag if all enemies in the ith row are dead
-					}
-					totaldeadcounter += deadcounter;
-					deadcounter = 0;	//reset counter
-			}
-			
-			if(totaldeadcounter == 16){	//check if whole wave is dead
-					wave[wave_number].clear = 1;							//set attribute flag if whole wave clear
-					//wave_number++;	//increment wave_number only if whole wave is dead
-			}
-			totaldeadcounter = 0;		//reset counter
-		}
-//*******************************************************************************************************************************************
 
-}//END OF SYSTICK ISR===============================================================================================================================================================================
-//==================================================================================================================================================================================================
 
+
+
+
+
+
+
+
+
+
+
+//SYSTICK ISR START=====================================================================================================================================================================================================
+//======================================================================================================================================================================================================================
+//======================================================================================================================================================================================================================
+void SysTick_Handler(void){ // every 16.67 ms
+	//== ENEMY + PLAYER COLLISION (GAME OVER) ===============================
+			 DetectEnemyPlayerCollision(); //Sets gameOver_flag to 1 if detected
+	//=======================================================================
+	
+	//== ENEMY REACHED BOTTOM OF SCREEN (GAME OVER) ===============================
+			 DetectEnemyAtBottom(); //Sets gameOver_flag to 1 if detected
+	//=======================================================================
+	
+	
+	//== PLAYER HORIZONTAL MOVEMENT: get ADC reading from slideport and save to ADCMAIL, then set flag = 1 ====
+			 if(gameOver_flag == 0){ //player can only move if enemy has NOT collided with them
+					getADC();
+			 }
+	//=========================================================================================================
+
+	
+	//== BUTTON CHECKING: CHECK PORT E PIN 0 (PRIMARY FIRE BUTTON) TO DETERMINE MISSILE SPAWN ==================================================================================
+	//== PLAYER PRIMARY FIRE LIMITS: only 2 missiles allowed onscreen at a time, 250 ms delay between shots, missile images can never overlap (minimum of 5 pixels apart)
+		   DetectPE0();
+	//==========================================================================================================================================================================
+	
+
+	//== BUTTON CHECKING: CHECK PORT E PIN 1 (SECONDARY FIRE BUTTON) TO DETERMINE SECONDARY MISSILE SPAWN ===============================================
+	//== PLAYER SECONDARY FIRE LIMITS: only 1 missiles allowed onscreen at a time, limited number of shot charges (3 BIG LEDS, 2 LASERS, 1 WAVECLEAR)
+			 DetectPE1();
+	//=================================================================================================================================================
+
+
+//DEBUG THIS FUNCTION (BUGS WITH SECONDARY MISSILE COLLIDING WITH POWERUPS)
+//DEBUG THIS FUNCTION
+	//== ALL MISSILES + POWERUPS COLLISION DETECTION ========
+			 DetectMissilePowerupCollision();
+	//=======================================================
+//DEBUG THIS FUNCTION
+//DEBUG THIS FUNCTION
+
+
+	//== ALL MISSILES + ENEMIES COLLISION DETECTION =======
+			 DetectMissileEnemyCollision();
+	//=====================================================
+
+
+	//== POWERUP MOVEMENT ====================
+			 PowerupMovement_PositionUpdate();
+	//========================================
+	
+	
+	//== ENEMY MOVEMENT DECISIONS ===========
+			 EnemyMovement_PositionUpdate();
+	//=======================================
+
+
+	//== Update row clear attributes and wave clear attributes after enemies have been written over(depending on current wave #) =======
+			 UpdateWaveStructAttr();
+	//====================================================================================================================================
+
+
+}//END OF SYSTICK ISR===================================================================================================================================================================================================
+//======================================================================================================================================================================================================================
+//======================================================================================================================================================================================================================
+//======================================================================================================================================================================================================================
+
+
+
+
+
+
+
+
+
+
+
+//EVERYTHING BELOW THIS LINE IS INITIALIZATION AND HELPER FUNCTIONS
+//+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+//+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
 
 //PERIODIC TASKS FOR TIMERS 
@@ -1253,7 +545,6 @@ void SysTick_Handler(void){ // every 16.67 ms
 //TIMER1(CREATE SOUND EFFECTS USING DAC_OUT) 
 //TIMER2 (PROJECTILE MOVEMENT)
 //---------------------------------------------------------------------------------------------------------------------
-
 void playsound(void){
 	if(sound_pointer != silence){
 			if(sound_index < sound_length){
@@ -1331,7 +622,6 @@ void missile_move(void) { // fires primary missile at 80 HZ (moves 1 pixel every
 		}		
 	}
 }		
-
 //-------------------------------------------------------------------------------------------------------------------
 
 
@@ -1441,7 +731,7 @@ void Delay100ms(uint32_t count){uint32_t volatile time;
 
 
 
-//ENEMY INITIALIZATION AND MOVEMENT HELPER FUNCTIONS
+//ENEMY INITIALIZATION AND ENEMY MOVEMENT HELPER FUNCTIONS
 //---------------------------------------------------------------------------------------------------------------------
 void wave0Init(void){	//intializing each wave separately in case we want different dimensions, images, and speeds for other waves!!!
 	for(int i=0; i<4; i++){ //for each row of enemies
@@ -1651,8 +941,9 @@ void moveEnemyDown(uint8_t wave_num, uint8_t row_num, uint8_t enemy_num){
 		wave[wave_num].enemy[row_num][enemy_num].y += 1;
 }
 
-
-void reload_movement_cts(uint8_t i, uint8_t j){
+//RELOEAD MOVEMENT COUNTER FUNCTION
+//RESETS THE COUNTER ARRAYS BEFORE THE NEXT ARRAY FOR PROPER ENEMY MOVEMENT
+void reload_movement_cts(void){
 	for(int i=0; i<4; i++){
 		for(int j=0; j<4; j++){
 			moveRightInit_ct[i][j] = (26/wave[wave_number].enemy[i][j].speed);		//used to be regular arrays of 4 elements
@@ -1662,33 +953,1072 @@ void reload_movement_cts(uint8_t i, uint8_t j){
 			moveLeft_ct[i][j] = 0;
 		}
 	}
+} // end of reload_movement_cts() function
+
+void gameOver(void){ // ONLY RUNS THIS FUNCTION IF game_Over_flag == 2 (which is set at end of gameover_playerdeathanimation function)
+	if(gameOver_flag == 2){
+			//DisableInterrupts();
+			//disable_player_controls = 1; // set to 1 again to be safe (use polling with gameOverflag == 1 instead does same thing)
+			
+			//ONLY NEED TIMER1 INTERRUPTS NOW TO PLAY MUSIC DURING THE GAME OVER SCREEN (NOT WORKING RIGHT NOW)
+				NVIC_ST_CTRL_R = 0x0000; // disable all SysTick Interrupts
+				TIMER0_CTL_R = 0x00000000;    // disable timer0
+				TIMER0_IMR_R = 0x00000000;    // disable timeout interrupt for timer0 that controls animation counters and spawn counters
+				TIMER2_CTL_R = 0x00000000;    // disable timer2
+				TIMER2_IMR_R = 0x00000000;    // disable timeout interrupt for timer2 that controls player primary fire missile speed
+			
+			// ending screen music not working as of now
+				//sound_pointer = game_over_screen;
+				//sound_length = 115456; // check if there is enough storage for 11 sec song clip
+				//sound_index= 0;
+			
+			ST7735_FillScreen(0x0000);
+			ST7735_DrawString(2, 6, msg_gameOver_line1, 0xFFFF);
+			ST7735_DrawString(2, 7, msg_gameOver_line2, 0xFFFF);
+			ST7735_DrawString(2, 8, msg_finalscore, 0xFFFF);
+			for(int i = 3; i >= 0; i--){ //convert 4 digit integer score to char array scorept
+					scorept[i] = ((total_score % 10) + 0x30);	// integer score value is converted to a character array of 4 digits and a null sentinel
+					total_score /= 10;
+			}
+			scorept[4] = 0; // null terminate the last element in the scorept char array
+			ST7735_DrawString(15, 8, scorept, 0xFFFF);
+			while(1){} //freeze the game on the game over screen permanantly
+			//while(sound_pointer == game_over_screen){} //stay in this loop forever to keep playing music and freeze text
+		}
 }
 
-void gameOver(void){
-	//DisableInterrupts();
-	disable_player_controls = 1; // set to 1 again to be safe
-	
-	//ONLY NEED TIMER1 INTERRUPTS NOW TO PLAY MUSIC DURING THE GAME OVER SCREEN (NOT WORKING RIGHT NOW)
-		NVIC_ST_CTRL_R = 0x0000; // disable all SysTick Interrupts
-		TIMER0_CTL_R = 0x00000000;    // disable timer0
-	  TIMER0_IMR_R = 0x00000000;    // disable timeout interrupt for timer0 that controls animation counters and spawn counters
-		TIMER2_CTL_R = 0x00000000;    // disable timer2
-		TIMER2_IMR_R = 0x00000000;    // disable timeout interrupt for timer2 that controls player primary fire missile speed
-	
-	// ending screen music not working as of now
-		//sound_pointer = game_over_screen;
-		//sound_length = 115456; // check if there is enough storage for 11 sec song clip
-		//sound_index= 0;
-	
-	ST7735_FillScreen(0x0000);
-	ST7735_DrawString(2, 6, msg_gameOver_line1, 0xFFFF);
-	ST7735_DrawString(2, 7, msg_gameOver_line2, 0xFFFF);
-	ST7735_DrawString(2, 8, msg_finalscore, 0xFFFF);
-	for(int i = 3; i >= 0; i--){ //convert 4 digit integer score to char array scorept
-			scorept[i] = ((total_score % 10) + 0x30);	// integer score value is converted to a character array of 4 digits and a null sentinel
-			total_score /= 10;
+void gameOverEnemyDeathAnimation(void){
+						NVIC_ST_CTRL_R = 0x0005; // disable systick interrupts to freeze collision frame and prevent all enemy movement, missile fire, adc movement
+						//disable_player_controls = 1; // SET DISABLE FLAG TO 1 SINCE NOW PLAYER SHOULDN'T BE ABLE TO DO ANYTHING (use polling with gameOverflag == 1 instead does same thing)
+						//DisableInterrupts(); //prevent all interrupts DON'T USE THIS SINCE WE STILL NEED TIMER0 INTERRUPTS FOR ANIMATIONS AND TIMER1 FOR SOUND
+						sound_pointer = playerdeathaudio; // set sound effect to player game over jingle
+						sound_length = 23748;
+						sound_index = 0;
+						// Flash enemy that breached bottom edge 4 times while death audio jingle above is playing
+							 for(int i = 0; i < 4; i++){ //flash enemy that touched bottom of screen 4 times
+										 Delay100ms(5); // delay 500 ms
+										 for(int j = 0; j < j_index; j++){  // fill in every enemy that collided w bottom (could be multiple at a time up to 4)
+												 ST7735_FillRect(wave[wave_number].enemy[collided_enemy_i][collided_enemies_j[j]].x, wave[wave_number].enemy[collided_enemy_i][collided_enemies_j[j]].y - wave[wave_number].enemy[collided_enemy_i][collided_enemies_j[j]].height + 1, wave[wave_number].enemy[collided_enemy_i][collided_enemies_j[j]].width, wave[wave_number].enemy[collided_enemy_i][j].height, 0x0000);
+										 }
+										 Delay100ms(2); // delay 200 ms
+										 for(int j = 0; j < 4; j++){  // redraw every enemy that collided w bottom (could be multiple at a time up to 4)
+												 ST7735_DrawBitmap(wave[wave_number].enemy[collided_enemy_i][j].x, wave[wave_number].enemy[collided_enemy_i][j].y, wave[wave_number].enemy[collided_enemy_i][j].image, wave[wave_number].enemy[collided_enemy_i][j].width, wave[wave_number].enemy[collided_enemy_i][j].height);
+										 }
+							 } // repeat 4 times
+						
+						// Clear player sprite and enemies that touched bottom of screen for good
+							 for(int j = 0; j < j_index; j++){  // fill in every enemy that collided w bottom (could be multiple at a time up to 4)
+									 ST7735_FillRect(wave[wave_number].enemy[collided_enemy_i][collided_enemies_j[j]].x, wave[wave_number].enemy[collided_enemy_i][collided_enemies_j[j]].y - wave[wave_number].enemy[collided_enemy_i][collided_enemies_j[j]].height + 1, wave[wave_number].enemy[collided_enemy_i][collided_enemies_j[j]].width, wave[wave_number].enemy[collided_enemy_i][j].height, 0x0000);
+									 wave[wave_number].enemy[collided_enemy_i][collided_enemies_j[j]].status = dead;
+							 }							 
+							 ST7735_FillRect(player.x, player.y - player.height + 1, player.width, player.height, 0x0000); // clear image of collided enemy and player
+							 
+							 player.status = dead; // player status is dead since they lost the game
+							 while(sound_pointer != silence){} //busy-wait until sound effect is done playing before continuing
+
+							 if(player.status == dead){ // do explosion animation and set sound pt for bigger explosion, also increment gameover flag right before exiting this if-statement
+									ST7735_FillScreen(0x0000); // clear screen to all black since explosion animation is done
+									gameOver_flag = 2; // set game over flag to 2 once dramatic explosion is done playing
+							 }
+} // end of gameOverEnemyDeathAnimation() function
+
+void gameOverPlayerDeathAnimation(void){
+	//if(gameOver_flag == 1){ // already checked for flag directly outside of function
+					if(player.status == dying && gameOver_flag == 1){ // ISR detected enemy+player collision
+					NVIC_ST_CTRL_R = 0x0005; // disable systick interrupts to freeze collision frame and prevent all enemy movement, missile fire, adc movement
+					//disable_player_controls = 1; // SET DIABLE FLAG TO 1 SINCE NOW PLAYER SHOULDN'T BE ABLE TO DO ANYTHING (use polling with gameOverflag == 1 instead does same thing)
+					//DisableInterrupts(); //prevent all interrupts DON'T USE THIS SINCE WE STILL NEED TIMER0 INTERRUPTS FOR ANIMATIONS AND TIMER1 FOR SOUND
+					sound_pointer = playerdeathaudio; // set sound effect to player game over jingle
+					sound_length = 23748;
+					sound_index = 0;
+					for(int i = 0; i < 4; i++){ //flash player and colliding enemy 4 times
+						Delay100ms(5); // delay 500 ms
+						ST7735_FillRect(wave[wave_number].enemy[collided_enemy_i][collided_enemy_j].x, wave[wave_number].enemy[collided_enemy_i][collided_enemy_j].y - wave[wave_number].enemy[collided_enemy_i][collided_enemy_j].height + 1, wave[wave_number].enemy[collided_enemy_i][collided_enemy_j].width, wave[wave_number].enemy[collided_enemy_i][collided_enemy_j].height, 0x0000);
+						ST7735_FillRect(player.x, player.y - player.height + 1, player.width, player.height, 0x0000); // clear image of collided enemy and player (player has no top and bottom border so needs + 1)
+						Delay100ms(2); // delay 200 ms
+						ST7735_DrawBitmap(wave[wave_number].enemy[collided_enemy_i][collided_enemy_j].x, wave[wave_number].enemy[collided_enemy_i][collided_enemy_j].y, wave[wave_number].enemy[collided_enemy_i][collided_enemy_j].image, wave[wave_number].enemy[collided_enemy_i][collided_enemy_j].width, wave[wave_number].enemy[collided_enemy_i][collided_enemy_j].height);
+						ST7735_DrawBitmap(player.x, player.y, player.image, player.width, player.height);
+					}
+					// clear enemy and player for good
+					ST7735_FillRect(wave[wave_number].enemy[collided_enemy_i][collided_enemy_j].x, wave[wave_number].enemy[collided_enemy_i][collided_enemy_j].y - wave[wave_number].enemy[collided_enemy_i][collided_enemy_j].height + 1, wave[wave_number].enemy[collided_enemy_i][collided_enemy_j].width, wave[wave_number].enemy[collided_enemy_i][collided_enemy_j].height, 0x0000);
+					ST7735_FillRect(player.x, player.y - player.height + 1, player.width, player.height, 0x0000); // clear image of collided enemy and player
+					player.status = dead;
+					wave[wave_number].enemy[collided_enemy_i][collided_enemy_j].status = dead;
+					while(sound_pointer != silence){} //wait until sound effect is done playing before continuing
+				}
+				if(player.status == dead){ // do explosion animation and set sound pt for bigger explosion, also increment gameover flag right before exiting this if-statement
+								//NVIC_ST_CTRL_R = 0x0000;
+								//NVIC_ST_RELOAD_R = 5333333; // interrupt at 15 hz (slow-motion)
+								//NVIC_ST_CTRL_R = 0x0007; // arm interrupts again but now with player controls disabled and movement speed of all enemies quartered (15 Hz)
+					
+							//draw first frame of explosion
+								ST7735_DrawBitmap(explosion_anim[explosion_frame].x, explosion_anim[explosion_frame].y, explosion_anim[explosion_frame].image, explosion_anim[explosion_frame].width, explosion_anim[explosion_frame].height);					
+								sound_pointer = dramaticexplosion; // replace animation with bigger, more dramatic explosion with more frames, and more detail (10 frames?)
+								sound_length = 33248; // edit length to match new sound array size
+								sound_index = 0;
+					
+								explosion_counter = 0; //clear counter
+								explosion_done = 0;		//timer0 starts incrementing explosion_counter in the animation/spawn_delay function
+								explosion_frame++;
+					
+								while(explosion_done == 0){ // keep running until last frame of explosion is cleared
+										if(explosion_done == 0 && explosion_counter >= 4 && explosion_frame < 5){	//only draw next frame if explosion counter is set (375 ms has passed since last frame); if no collosions occur, explosion counter = 0 and explosion frame = 6
+												ST7735_DrawBitmap(explosion_anim[explosion_frame].x, explosion_anim[explosion_frame].y, explosion_anim[explosion_frame].image, explosion_anim[explosion_frame].width, explosion_anim[explosion_frame].height);
+												explosion_counter = 0;
+												explosion_frame++;				//increment frame after drawing previous frame
+										}
+										if(explosion_frame == 5){ //last explosion frame has just been drawn --> clear explosion and set explosion_done flag for timer to stop incrementing counter
+												ST7735_FillRect(explosion_anim[4].x, explosion_anim[4].y - explosion_anim[4].height + 1, explosion_anim[4].width, explosion_anim[4].height, 0x0000);
+												explosion_done = 1;
+												explosion_counter = 0;
+												explosion_frame = 6;  //set to 6 until it is reset to 0 on the next collision
+										}
+										if(clear_explosion_early == 1){						//clears a previous explosions BMP if another explosion happens to occur before the first is done animating (prevents previous image from staying forever)
+												clear_explosion_early = 0; //clear flag
+												ST7735_FillRect(x_save, y_save - explosion_anim[4].height + 1, explosion_anim[4].width, explosion_anim[4].height, 0x0000);
+										}
+								}
+								ST7735_FillScreen(0x0000); // clear screen to all black since explosion animation is done
+								while(sound_pointer != silence){ //busy-wait until big explosion sound is done playing and animation is over to move on to final game over screen
+								}
+								gameOver_flag = 2; // set game over flag to 2 once dramatic explosion is done playing
+								//gameOver();
+									//return 0;				
+			}	
+	//}
+} //end of gameOverPlayerDeathAnimation function
+
+// Checks the systick ISR if the m1spawn and m2spawn flags were set to 1, if so, then reset flag, draw missile bmp, reset fireratelimit_counter, and set the missile sprite status to moving
+//m1spawn and m2spawn:  flags control basic primary missile
+//firerate_limit_counter: global counter that is set to 0 in this function
+//NOTE: RESPECTIVE MISSILES[0[ OR MISSILES[1] SPRITE STATUS IS SET TO MOVING IN THIS FUNCTION (if the corresponding spawn flag was set)
+//*********************************************************************************************************************************************************************************************
+void spawnBasicMissile(void){
+	if(m1spawn == 1){
+			m1spawn = 0;					//clear flag
+			ST7735_DrawBitmap(missiles[0].x, missiles[0].y, missiles[0].image, missiles[0].width, missiles[0].height);
+			firerate_limit_counter = 0;		//reset counter once missile has spawned			 				  
+			missiles[0].status = moving;
 	}
-	scorept[4] = 0; // null terminate the last element in the scorept char array
-	ST7735_DrawString(15, 8, scorept, 0xFFFF);
-	//while(sound_pointer == game_over_screen){} //stay in this loop forever to keep playing music and freeze text
+	if(m2spawn == 1){
+			m2spawn = 0;					//clear flag
+			ST7735_DrawBitmap(missiles[1].x, missiles[1].y, missiles[1].image, missiles[1].width, missiles[1].height);
+			firerate_limit_counter = 0;		//reset counter once missile has spawned				
+			missiles[1].status = moving;		
+	}
+} // end of spawnBasicMissile() function
+
+void spawnBigMissile(void){
+			if(bigMissile_spawn == 1){
+					bigMissile_spawn = 0;					//clear flag
+					ST7735_DrawBitmap(missile_LED.x, missile_LED.y, missile_LED.image, missile_LED.width, missile_LED.height);
+					firerate_limit_counter = 0;		//reset counter once missile has spawned			 				  
+					missile_LED.status = moving;
+			}	
+}// end of spawnBigMissile() function
+
+
+void spawnLaser(void){					
+		 if(laser_spawn == 1){
+					laser_spawn = 0;					//clear flag
+					ST7735_DrawBitmap(missile_laser.x, missile_laser.y, laserFrame[laserFrame_idx], missile_laser.width, missile_laser.height);
+					firerate_limit_counter = 0;		//reset counter once missile has spawned			 				  
+					missile_laser.status = moving;
+					if(laserFrame_dwell == 10){
+							laserFrame_idx = (laserFrame_idx + 1) % 3;	// increment frame index
+							laserFrame_dwell = 0;	// reset frame dwell counter
+					}
+		 }			
+}// end of spawnLaser() function
+
+//Move player sprite BY 1 PIXEL PER 32 ADC VALUE based off of difference in ADC values (IGNORES CHANGES IN ADC VALUE LESS THAN 32)
+//DOES NOT RUN IF SYSTICK HAS NOT RUN AND SET SEMAPHORE FLAG YET (flag  variable set in SYSTICK ISR right after getting new ADC data)
+void movePlayer(void){
+			flag = 0;																			// acknowledge flag
+			Data = ADCMAIL;																// update player position
+			adc_diff = (Data - Prev_adc);									// calculate difference 
+			// if new ADC data is less than 32 of the previous, move player to the left
+			if((adc_diff <= -32) && (player.x - 1) != 0){	
+				adc_diff /= 32;															// convert to pixels
+				for(int i = 0; i > adc_diff; i--){
+					if((player.x - 1) == 0)break;							// left border reached
+					player.x = player.x - 1;									// move player one pixel to the left
+					ST7735_DrawBitmap(player.x, player.y, player.image, player.width, player.height);
+				}		
+			}
+			// move player to the right if new adc data is equal or greater than 32 of previous value
+			else if((adc_diff >= 32) && ((player.x + 1) != 127 - player.width)){
+				adc_diff /= 32;															// convert to pixels
+				for(int i = 0; i < adc_diff; i++){					
+					if((player.x+1) == 127-player.width)break;// right border reached
+					player.x = player.x + 1;									// move player one pixel to the right
+					ST7735_DrawBitmap(player.x, player.y, player.image, player.width, player.height);
+				}
+			}
+			Prev_adc = Data;															// update previous ADC value
+}// end of spawnBasicMissile() function
+
+
+void moveAllMissiles(void){
+		 moveBasicMissile();
+		 moveBigMissile();
+	   moveLaser();
 }
+
+// ***** MISSILE MOVEMENT (by 1 pixel based on movemissile global flag that is set every 1/80th sec by Timer2 ISR (missile_move periodic task)) *******************************************
+void moveBasicMissile(void){
+		 if(movemissileflag == 1){
+			  movemissileflag = 0; // clear flag
+				for(int i = 0; i < 2; i++)
+				{
+					if(missiles[i].status == moving){
+						missiles[i].y--;
+						ST7735_DrawBitmap(missiles[i].x, missiles[i].y, missiles[i].image, missiles[i].width, missiles[i].height);
+					}
+				}
+		 }
+}// end of moveBasicMissile() function
+
+void moveBigMissile(void){
+			if((missile_LED.status != dead) && (missile_LED.status != dying)){
+						if(moveBigMissile_flag == 1){
+								moveBigMissile_flag = 0;	//clear flag
+								if(missile_LED.status == moving){
+									missile_LED.y--;
+									ST7735_DrawBitmap(missile_LED.x, missile_LED.y, missile_LED.image, missile_LED.width, missile_LED.height);
+								}
+						}		
+		 }
+}// end of moveBigMissile() function
+
+
+void moveLaser(void){						
+			if(missile_laser.status != dead){
+					if(moveLaser_flag == 1){
+						moveLaser_flag = 0;													//clear flag
+						if(missile_laser.status == moving){
+								missile_laser.y--;
+								ST7735_DrawBitmap(missile_laser.x, missile_laser.y, laserFrame[laserFrame_idx], missile_laser.width, missile_laser.height);
+								if(laserFrame_dwell == 10){
+									laserFrame_idx = (laserFrame_idx + 1) % 3;	// increment frame index
+									laserFrame_dwell = 0;	// reset frame dwell counter
+								}else
+								{
+									laserFrame_dwell++;
+								}
+						}
+					}			
+			}
+}// end of moveLaser() function
+
+//FillRect over the basic missile and SET MISSILE SPRITE STATUS TO DEAD if corresponding missileCollisionFlag[i] is set in SysTick ISR
+//ONLY FILLS MISSILE IF THE MISSILECOLLISIONFLAG[i] IS SET
+void fillBasicMissile(void){
+		for(int i = 0; i < 2; i++){
+				if(missileCollisionFlag[i] == 1){
+						missileCollisionFlag[i] = 0;	// acknowledge
+						ST7735_FillRect(missiles[i].x, missiles[i].y - missiles[i].height + 1, missiles[i].width, missiles[i].height, 0x0000);
+						missiles[i].status = dead;	// only set status to dead after they have been drawn over
+				}
+		}
+}// end of fillBasicMissile() function
+
+
+void fillBigMissile(void){
+		 if(bigMissileCollision_flag == 1){
+					bigMissileCollision_flag = 0;	// acknowledge
+					ST7735_FillRect(missile_LED.x, missile_LED.y - missile_LED.height + 1, missile_LED.width, missile_LED.height, 0x0000);
+					missile_LED.status = dead;	// only set status to dead after they have been drawn over
+		 }
+} // end of fillBigMissile() function
+
+
+//IF COLLISION FLAG ATTRIBUTE SET FOR ENEMY, DRAW OVER ENEMY AND DRAW FIRST FRAME OF EXPLOSION
+void fillEnemyDrawExplosionFrame1(void){
+			for(int i = 0; i < 4; i++){	//for each row
+				for(int j = 0; j < 4; j++){//for each enemy
+					//if(wave[wave_number].enemy[i][j].status == dead){ //skip checking enemies that are unspawned or alive
+							if(wave[wave_number].enemy[i][j].collision_flag == 1 && gameOver_flag == 0){// don't draw over enemy if enemy has collided with player
+									wave[wave_number].enemy[i][j].collision_flag = 0;		// acknowledge
+									ST7735_FillRect(wave[wave_number].enemy[i][j].x, wave[wave_number].enemy[i][j].y - wave[wave_number].enemy[i][j].height + 1, wave[wave_number].enemy[i][j].width, wave[wave_number].enemy[i][j].height, 0x0000);
+									wave[wave_number].enemy[i][j].status = dead; //status set to dead once the enemy is drawn over
+										
+									//draw first frame of explosion
+									ST7735_DrawBitmap(explosion_anim[explosion_frame].x, explosion_anim[explosion_frame].y, explosion_anim[explosion_frame].image, explosion_anim[explosion_frame].width, explosion_anim[explosion_frame].height);					
+									explosion_counter = 0; //clear counter
+									explosion_done = 0;		//timer0 starts incrementing explosion_counter in the animation/spawn_delay function
+									explosion_frame++;
+							}
+					//}checking if status is dead does same thing as checking if collision_flag is 1
+				}
+			}
+}// end of function //
+
+
+void explosionAnimationUpdate(void){
+				if(explosion_done == 0 && explosion_counter >= 1 && explosion_frame < 5){	//only draw next frame if explosion counter is set (125 ms has passed since last frame); if no collosions occur, explosion counter = 0 and explosion frame = 6
+						ST7735_DrawBitmap(explosion_anim[explosion_frame].x, explosion_anim[explosion_frame].y, explosion_anim[explosion_frame].image, explosion_anim[explosion_frame].width, explosion_anim[explosion_frame].height);
+						explosion_counter = 0;
+						explosion_frame++;				//increment frame after drawing previous frame
+				}
+				if(explosion_frame == 5){ //last explosion frame has just been drawn --> clear explosion and set explosion_done flag for timer to stop incrementing counter
+						ST7735_FillRect(explosion_anim[4].x, explosion_anim[4].y - explosion_anim[4].height + 1, explosion_anim[4].width, explosion_anim[4].height, 0x0000);
+						explosion_done = 1;
+						explosion_counter = 0;
+						explosion_frame = 6;  //set to 6 until it is reset to 0 on the next collision
+						
+						if(wave[wave_number].clear == 1){
+								wave[wave_number].clear = 2; //set to 2 once last enemy explosion animation is done
+						}
+				}
+				if(clear_explosion_early == 1){						//clears a previous explosions BMP if another explosion happens to occur before the first is done animating (prevents previous image from staying forever)
+					clear_explosion_early = 0; //clear flag
+					ST7735_FillRect(x_save, y_save - explosion_anim[4].height + 1, explosion_anim[4].width, explosion_anim[4].height, 0x0000);
+					
+					if(wave[wave_number].clear == 1){
+								wave[wave_number].clear = 2; //set to 2 once last enemy explosion animation is done
+						}
+				}
+}//end of explosionAnimationUpdate() function
+
+
+void movePowerup(void){
+		 if((powerup[powerupIdx].status == alive) && (powerup[powerupIdx].x + powerup[powerupIdx].width != 0)){// if power-up has reached left side, kill it
+				ST7735_DrawBitmap(powerup[powerupIdx].x, powerup[powerupIdx].y, powerup[powerupIdx].image, powerup[powerupIdx].width, powerup[powerupIdx].height);
+		 }
+		 else if(powerup[powerupIdx].status == dying){
+				ST7735_FillRect(powerup[powerupIdx].x, powerup[powerupIdx].y - powerup[powerupIdx].height + 1, powerup[powerupIdx].width, powerup[powerupIdx].height, 0x0000);
+				powerup[powerupIdx].status = dead;
+		 }
+}// end of movePowerup() function
+
+
+
+// iterate through 4 rows, if row uncleared, draw bmp of new position for enemies that are still alive
+void moveEnemies(void){
+			for(int i = 0; i < 4; i++){
+					if(wave[wave_number].row_clear[i] == 0){	//only move ith row if the row has not been cleared
+						for(int j = 0; j < 4; j++){
+							if(wave[wave_number].enemy[i][j].status == alive){// do nothing if enemy is dead/unspawned/dying
+								ST7735_DrawBitmap(wave[wave_number].enemy[i][j].x, wave[wave_number].enemy[i][j].y, wave[wave_number].enemy[i][j].image, wave[wave_number].enemy[i][j].width, wave[wave_number].enemy[i][j].height);
+							}
+						}
+					}
+			}
+}// end of moveEnemies() function
+
+
+
+// uses a switch(wave_number) to print messages after each wave is cleared (using ST7735_DrawString)
+void printWaveClearedMessages(void){ 
+		switch(wave_number){
+				case 0:
+					ST7735_DrawString(4, 3, msg1pt, 0xFFFF);
+					break;
+				case 1:
+					ST7735_DrawString(4, 3, msg2pt, 0xFFFF);
+					break;
+				case 2:
+					ST7735_DrawString(4, 3, msg3pt, 0xFFFF);
+					break;
+				case 3:
+					ST7735_DrawString(4, 3, msg4pt, 0xFFFF);
+					break;
+				case 4:
+					ST7735_DrawString(4,3, msg5pt, 0xFFFF);	//final boss msg
+				default:	
+					//output you win message and display score here
+					break;
+		}
+}//end of function //
+
+
+
+// DISABLES INTERRUPTS DURING FUNCTION, PRINT WAVE CLEARED MESSAGES, DELAYS 2 ms, AND DOES ALL VARIABLE CLEARS/INCREMENTS TO PREPARE FOR NEXT WAVE
+//CLEARED VARIABLES TO 0: current_row_number, wave_spawn_done, powerupSpawn
+//VARIABLES INCREMENTED BY 1: wave_number, powerupIdx
+void waveClearedTransition(void){
+					DisableInterrupts();	// disable interrupts after the wave dies (no movement needed)
+				//** PRINT WAVE CLEARED MESSAGE (SWITCH BASED ON WAVE_NUMBER glob variable) ***********
+					printWaveClearedMessages();
+				
+					
+				//** Delay 2 seconds, overwrite text on screen, then clear the wave_spawn_done flag and reset current_row_number to 0 *******
+				Delay100ms(20); //POST ON PIAZZA IF WE CAN USE DELAYS IF WE ALREADY HAVE 4 INTERRUPTS (break between waves of enemies)
+				ST7735_FillRect(19, 20, 107, 21, 0x0000);  //clear text
+				current_row_number = 0;
+				wave_spawn_done = 0;
+				wave_number++;			//increment wave_number only if whole wave is dead
+				powerupSpawn = 0;	// clear powerup spawn flag
+				powerupIdx += 1; 		// increment powerup index for next wave
+				//for(int i=0; i<4; i++){ // RELOAD FUNCTION ALREADY HAS NESTED FOR LOOPS
+					//for(int j=0; j<4; j++){
+				reload_movement_cts();			//re-initialize the movement counters for the next wave
+					//}
+				//}
+				EnableInterrupts();
+}// end of func
+
+
+// converts total_score to a character array and draws 4 digit score to top left corner of LCD
+void printCurrentScore(void){ 
+		total_score_copy = total_score; // don't ever change value of the games total score	
+		for(int i = 3; i >= 0; i--){		
+				scorept[i] = ((total_score_copy % 10) + 0x30);	// integer score value is converted to a character array of 4 digits and a null sentinel
+				total_score_copy /= 10;
+		}
+		scorept[4] = 0; // null terminate the last element in the array
+		ST7735_DrawString(0, 0, scorept, 0x07FF);	//draw the score at the top left corner
+}// end of func
+
+
+// spawns new row every 3 seconds based on counter_125ms until current_row_number == 4
+void spawnNextRow(void){
+		if(current_row_number == 4){
+			wave_spawn_done = 1; //set global flag
+		}
+		else if(counter_125ms == 24){// ONLY DRAW NEW ROW AFTER 3 SECONDS HAS PASSED
+			counter_125ms = 0;	//reset counter
+			for(int j = 0; j < 4; j++){
+					ST7735_DrawBitmap(wave[wave_number].enemy[current_row_number][j].x, wave[wave_number].enemy[current_row_number][j].y, wave[wave_number].enemy[current_row_number][j].image, wave[wave_number].enemy[current_row_number][j].width, wave[wave_number].enemy[current_row_number][j].height);
+					wave[wave_number].enemy[current_row_number][j].status = alive; //each sprite in this row is now alive once spawned
+			}
+			wave[wave_number].row_spawn[current_row_number] = 1;
+			current_row_number++;	//increment spawn row # for next second
+		}
+} // end of func
+
+
+ // put ADC data into ADCMAIL using ADC_In() and set semaphore flag to 1
+void getADC(void){
+		ADCMAIL = ADC_In();		// save the ADC data to a mailbox (global variable)
+		flag = 1;							// set the semaphore flag 
+}// end of func
+
+// check if enemy has collided with player sprite --> IF SO, SETS GAMEOVERFLAG TO 1
+void DetectEnemyPlayerCollision(void){
+			for(int k = 0; k < 4; k++){ //for each of 4 rows
+				if(wave[wave_number].row_clear[k] == 0){ //only check kth row if clear flag not set
+					for(int j = 0; j < 4; j++){
+						if(wave[wave_number].enemy[k][j].status == alive){	// skip collision detection if enemy is dead
+							// check vertical overlap (top)
+							if((((player.y < wave[wave_number].enemy[k][j].y) && (player.y > (wave[wave_number].enemy[k][j].y - wave[wave_number].enemy[k][j].height))) ||
+							// check vertical overlap (bottom)
+							(((player.y - player.height) < wave[wave_number].enemy[k][j].y) && ((player.y - player.height) > (wave[wave_number].enemy[k][j].y - wave[wave_number].enemy[k][j].height)))) &&
+							// check horizontal overlap (right)
+							(((player.x > wave[wave_number].enemy[k][j].x) && (player.x < (wave[wave_number].enemy[k][j].x + wave[wave_number].enemy[k][j].width))) ||	
+							// check horizontal overlap (left)
+							((player.x + player.width > wave[wave_number].enemy[k][j].x) && (player.x + player.width < (wave[wave_number].enemy[k][j].x + wave[wave_number].enemy[k][j].width))))){
+								player.status = dying;  		// update enemy sprite status to DYING BUT NOT DEAD
+								
+								collided_enemy_i = k; // save the row, col information of the sprite that ran into the player
+								collided_enemy_j = j;
+								gameOver_flag = 1;  // NOW 1 MEANS ENEMY COLLISION WITH PLAYER OCCURED--> GOING TO SET THE FLAG TO 2 AFTER I IMPLEMENT MY IDEA (FREEZE DEATH FRAME, FLASH 3 TIMES)
+							
+							
+								//PLAYER ENEMY EXPLOSION IS HANDLED SEPARATELY IN GAMEOVER_PLAYERDEATHANIMATION FUNCTION?
+								explosion_frame = 0;
+								explosion_counter = 1;
+								if(explosion_done == 0){		//if previous explosion is not done yet once another collosion occurs, set clear_explosion_early flag and save previous coordinates before overwriting
+									clear_explosion_early = 1;
+									x_save = explosion_anim[4].x;
+									y_save = explosion_anim[4].y;
+								}
+								//CHANGE THESE EXPLOSION_ANIMATIONS TO NEW DRAMATIC EXPLOSION ANIMIATION AND MAKE COORDINATES CENTERED AT PLAYER (IF TIME)
+								for(int i = 0; i < 5; i++){
+									explosion_anim[i].status = alive;
+									explosion_anim[i].x = (player.x - 1); //center explosion at middle of player sprite
+									explosion_anim[i].y = (player.y); //explosion will always be at the bottom of the screen
+								}	
+								
+							}
+						}
+					}
+				}
+			}	
+}// end of func
+
+void DetectEnemyAtBottom(void){
+			for(int k = 0; k < 4; k++){ //for each of 4 rows
+				if(wave[wave_number].row_clear[k] == 0){ //only check kth row if clear flag not set
+					for(int j = 0; j < 4; j++){
+						if(wave[wave_number].enemy[k][j].status == alive){	// skip collision detection if enemy is dead
+							// Check this enemy's y position with the bottom of LCD screen (y == 159)
+								 if(wave[wave_number].enemy[k][j].y == 159){
+												//player.status = dying;  		// ONLY SET THIS FOR THE DETECTPLAYERENEMYCOLLISION() FUNCTION
+										gameOver_flag = 1;  // NOW 1 MEANS ENEMY COLLISION WITH PLAYER OCCURED--> GOING TO SET THE FLAG TO 2 AFTER I IMPLEMENT MY IDEA (FREEZE DEATH FRAME, FLASH 3 TIMES)
+									  collided_enemy_i = k; // save the row information of the sprite that ran into the player
+										collided_enemies_j[j_index] = j; // save the col position info of the sprites that ran into player					
+										j_index++;
+									
+										//NO EXPLOSION FOR ENEMY REACHING THE BOTTOM
+									 /*
+										explosion_frame = 0;
+										explosion_counter = 1;
+										if(explosion_done == 0){		//if previous explosion is not done yet once another collosion occurs, set clear_explosion_early flag and save previous coordinates before overwriting
+											 clear_explosion_early = 1;
+											 x_save = explosion_anim[4].x;
+											 y_save = explosion_anim[4].y;
+										}
+										//CHANGE THESE EXPLOSION_ANIMATIONS TO NEW DRAMATIC EXPLOSION ANIMIATION AND MAKE COORDINATES CENTERED AT PLAYER (IF TIME)
+										for(int i = 0; i < 5; i++){
+												explosion_anim[i].status = alive;
+												explosion_anim[i].x = (player.x - 1); //center explosion at middle of player sprite
+												explosion_anim[i].y = (player.y); //explosion will always be at the bottom of the screen
+										}	
+										*/
+									
+								 }
+						}
+					}
+				}
+			}		
+			//j_index = 0; // reset to 0 before exiting function (WRONG LOGIC, INSTEAD, THE collided_enemies_j is filled with j_index # of elements
+}// end of DetectEnemyAtBottom() function
+
+
+
+//Check PE0 primary button press (red)
+void DetectPE0(void){
+		if(gameOver_flag == 0){ // player can only fire missiles if they have not died
+			 if(PE0 == 1 && firerate_limit_counter >=2){ //only sets missile spawn flags if at least 250 ms has passed since the last missile was fired
+						//SW0 = PE0;				// read data to clear Port E data
+						if(missiles[0].status == dead){// case for if 1st missile dead/offscreen
+							missiles[0].x = (player.x + player.width/2) - missiles[0].width/2;			// assign starting x pos of missile
+							missiles[0].y = (player.y - player.height);															// assign starting y pos of missile	
+							m1spawn = 1;
+							
+								if(sound_pointer != silence){ // missile fire sound can interrupt prev sound if conflicting, resume prev sound after laser sound is done
+									sound_pointer_save = sound_pointer;
+									sound_pointer = laser5;
+									interrupting_laser_sound_flag = 1;
+									sound_length_save = sound_length;
+									sound_length = 3600;
+									sound_index_save = sound_index; // save sound index of prev sound before resetting to 0
+									sound_index = 0;						
+								}
+								else{ // if sound pointer set to silence when missile fire button pressed, just set to laser sound
+									sound_pointer = laser5;
+									sound_length = 3600;
+									sound_index = 0;
+								}
+						}															
+						else if((missiles[0].y <= 134) && (missiles[0].status == moving) && (missiles[1].status == dead)){	// case for if 2nd missile dead/offscreen and at least 5 pixels of separation between successesive missiles						
+								missiles[1].x = (player.x + player.width/2) - missiles[1].width/2;			// assign starting x pos of missile
+								missiles[1].y = (player.y - player.height);															// assign starting y pos of missile	
+								m2spawn = 1;
+								
+								if(sound_pointer != silence){ // missile fire sound can interrupt explosion sound if conflicting, resume explosion sound after laser sound is done
+									sound_pointer_save = sound_pointer;
+									sound_pointer = laser5;
+									interrupting_laser_sound_flag = 1;
+									sound_length_save = sound_length;
+									sound_length = 3600;
+									sound_index_save = sound_index; // save sound index of prev sound before resetting to 0
+									sound_index = 0;
+								}
+								else{ // if sound pointer set to silence when missile fire button pressed, just set to laser sound
+										sound_pointer = laser5;
+										sound_length = 3600;
+										sound_index = 0;
+								}
+						}
+			 }
+		}
+}// end of DetectPE0() function
+
+
+
+//Check PE1 secondary button press (yellow)
+void DetectPE1(void){
+		 if(gameOver_flag == 0){ // player can only fire secondary missiles if they have not died
+				if(((PE1 >> 1) == 1) && (upgrade != unequipped)){
+					//SW1 = PE1; // read from port e pin 1 to clear the data
+					// fire big missile
+					if((upgrade == led) && (bigMissile_counter >= 4) && (powerup_ct[bigMissile_Idx] > 0)){
+						if(missile_LED.status == dead){// case for if LED dead/offscreen
+							missile_LED.x = (player.x + player.width/2) - missile_LED.width/2;			// assign starting x pos of missile
+							missile_LED.y = (player.y - player.height);															// assign starting y pos of missile	
+							bigMissile_spawn = 1;
+							powerup_ct[bigMissile_Idx]--;	// decrement charge count
+							if(powerup_ct[bigMissile_Idx] == 0){
+								upgrade = unequipped;
+								//upgrade_bigMissile_flag = 0; // unequip big missile
+							}
+							if(sound_pointer != silence){ // missile fire sound can interrupt prev sound if conflicting, resume prev sound after laser sound is done
+								sound_pointer_save = sound_pointer;
+								sound_pointer = laser5;
+								interrupting_laser_sound_flag = 1;
+								sound_length_save = sound_length;
+								sound_length = 3600;
+								sound_index_save = sound_index; // save sound index of prev sound before resetting to 0
+								sound_index = 0;						
+							}
+							else{ // if sound pointer set to silence when missile fire button pressed, just set to laser sound
+								sound_pointer = laser5;
+								sound_length = 3600;
+								sound_index = 0;
+							}
+						}															
+					}
+					// fire laser
+					else if((upgrade == laser) && (laser_counter >= 5) && (powerup_ct[laser_Idx] > 0)){
+						if(missile_laser.status == dead){// case for if LED dead/offscreen
+							missile_laser.x = (player.x + player.width/2) - missile_laser.width/2;			// assign starting x pos of missile
+							missile_laser.y = (player.y - player.height);															// assign starting y pos of missile	
+							laser_spawn = 1;
+							powerup_ct[laser_Idx]--;	// decrement charge count
+							if(powerup_ct[laser_Idx] == 0){
+								upgrade = unequipped;
+								//upgrade_laser_flag = 0; // unequip laser
+							}
+							if(sound_pointer != silence){ // missile fire sound can interrupt prev sound if conflicting, resume prev sound after laser sound is done
+								sound_pointer_save = sound_pointer;
+								sound_pointer = laser5;
+								interrupting_laser_sound_flag = 1;
+								sound_length_save = sound_length;
+								sound_length = 3600;
+								sound_index_save = sound_index; // save sound index of prev sound before resetting to 0
+								sound_index = 0;						
+							}
+							else{ // if sound pointer set to silence when missile fire button pressed, just set to laser sound
+								sound_pointer = laser5;
+								sound_length = 3600;
+								sound_index = 0;
+							}
+						}
+					}		
+					else if((upgrade == waveclear) && (powerup_ct[waveClear_Idx] > 0)){// waveclear only has 1 charge
+						powerup_ct[waveClear_Idx]--;	// decrement charge count
+						if(powerup_ct[waveClear_Idx] == 0){
+								upgrade = unequipped;
+								//upgrade_waveClear_flag = 0; // unequip waveclear
+							}
+						if(sound_pointer != silence){ // missile fire sound can interrupt prev sound if conflicting, resume prev sound after laser sound is done
+								sound_pointer_save = sound_pointer;
+								sound_pointer = laser5;
+								interrupting_laser_sound_flag = 1;
+								sound_length_save = sound_length;
+								sound_length = 3600;
+								sound_index_save = sound_index; // save sound index of prev sound before resetting to 0
+								sound_index = 0;						
+						}
+						else{ // if sound pointer set to silence when missile fire button pressed, just set to laser sound
+							sound_pointer = laser5;
+							sound_length = 3600;
+							sound_index = 0;
+						}
+						for(int k = 0; k < 4; k++){ //for each of 4 rows
+							if(wave[wave_number].row_clear[k] == 0){ //only check kth row if clear flag not set
+								for(int j = 0; j < 4; j++){
+									if(wave[wave_number].enemy[k][j].status == alive){	// skip collision detection if enemy is dead
+												wave[wave_number].enemy[k][j].status = dying;  		// update enemy sprite status to DYING INSTEAD OF DEAD
+												wave[wave_number].enemy[k][j].collision_flag = 1;	// set collision flag
+												total_score += wave[wave_number].enemy[k][j].score; // add the dying enemy's score value to the total_score global variable
+												explosion_frame = 0;
+												explosion_counter = 1;
+												if(explosion_done == 0){		//if previous explosion is not done yet once another collosion occurs, set clear_explosion_early flag and save previous coordinates before overwriting
+													clear_explosion_early = 1;
+													x_save = explosion_anim[4].x;
+													y_save = explosion_anim[4].y;
+												}
+												for(int i = 0; i < 5; i++){
+													explosion_anim[i].status = alive;
+													explosion_anim[i].x = (wave[wave_number].enemy[k][j].x - 2); //center explosion at middle of enemy sprite
+													explosion_anim[i].y = (wave[wave_number].enemy[k][j].y + 10);
+												}	
+											sound_pointer = explosion2; //set current_sound to explosion only if enemy health becomes 0 (replace w explosion1 if new sound doesn't fit animiation)
+											sound_length = 6919;				//set sound length (<-- change to 6919 if using explosion with louder volume
+											sound_index = 0;						//reset index
+									}// only check enemies that are alive
+								}//iterate for each of 4 enemies
+								waveClearDone_flag = 1;	// flag for possible use
+								break;
+							}//only check uncleared rows
+						}//iterate for each of 4 rows
+					}
+				}				
+			} // end of outermost if-statement
+}// end of DetectPE1() function
+
+
+
+
+
+void DetectMissilePowerupCollision(void){
+		 // basic missile check
+		 for(int i = 0; i < 2; i++){
+				if(missiles[i].status != dead){
+					if(powerup[powerupIdx].status == alive){	// skip collision detection if powerup is dead
+						// check vertical overlap (top)
+						if((((missiles[i].y < powerup[powerupIdx].y) && (missiles[i].y > (powerup[powerupIdx].y - powerup[powerupIdx].height))) ||
+						// check vertical overlap (bottom)
+						(((missiles[i].y - missiles[i].height) < powerup[powerupIdx].y) && ((missiles[i].y - missiles[i].height) > (powerup[powerupIdx].y - powerup[powerupIdx].height)))) &&
+						// check horizontal overlap (right)
+						(((missiles[i].x > powerup[powerupIdx].x) && (missiles[i].x < (powerup[powerupIdx].x + powerup[powerupIdx].width))) ||	
+						// check horizontal overlap (left)
+						((missiles[i].x + missiles[i].width > powerup[powerupIdx].x) && (missiles[i].x + missiles[i].width < (powerup[powerupIdx].x + powerup[powerupIdx].width))))){
+							powerup[powerupIdx].status = dying;
+							if(powerup[powerupIdx].image == power_LED){
+								upgrade = led;	// enable secondary attack (big missile)
+								//upgrade_bigMissile_flag = 1;
+								//upgrade_laser_flag = 0;
+								//upgrade_waveClear_flag = 0;
+								powerup_ct[bigMissile_Idx] = 3;	// set 3 charges
+							}else if(powerup[powerupIdx].image == power_laser){
+								upgrade = laser;// enable secondary attack (laser)
+								//upgrade_laser_flag = 1;
+								//upgrade_bigMissile_flag = 0;
+								//upgrade_waveClear_flag = 0;
+								powerup_ct[laser_Idx] = 2;	// set 2 charges
+							}else if(powerup[powerupIdx].image == power_waveClear){
+								upgrade = waveclear;	// enable secondary attack (waveClear)
+								//upgrade_waveClear_flag = 1;
+								//upgrade_laser_flag = 0;
+								//upgrade_bigMissile_flag = 0;
+								powerup_ct[waveClear_Idx] = 1;				// set 1 charge
+							}
+							missiles[i].status = dying;	// update missile status to DYING NOT DEAD
+							missileCollisionFlag[i] = 1;// set collision flag
+						}
+
+					}//end of if-statement for collision check on all 4 sides
+				}// skip is basic missile is dead
+		 }// check both basic missiles
+		
+		// big missile check
+		 if(missile_LED.status != dead){
+					if(powerup[powerupIdx].status == alive){	// skip collision detection if powerup is dead
+						// check vertical overlap (top)
+						if((((missile_LED.y < powerup[powerupIdx].y) && (missile_LED.y > (powerup[powerupIdx].y - powerup[powerupIdx].height))) ||
+						// check vertical overlap (bottom)
+						(((missile_LED.y - missile_LED.height) < powerup[powerupIdx].y) && ((missile_LED.y - missile_LED.height) > (powerup[powerupIdx].y - powerup[powerupIdx].height)))) &&
+						// check horizontal overlap (right)
+						(((missile_LED.x > powerup[powerupIdx].x) && (missile_LED.x < (powerup[powerupIdx].x + powerup[powerupIdx].width))) ||	
+						// check horizontal overlap (left)
+						((missile_LED.x + missile_LED.width > powerup[powerupIdx].x) && (missile_LED.x + missile_LED.width < (powerup[powerupIdx].x + powerup[powerupIdx].width))))){
+							powerup[powerupIdx].status = dying;
+							if(powerup[powerupIdx].image == power_LED){
+								upgrade = led;	// enable secondary attack (big missile)
+								//upgrade_bigMissile_flag = 1;
+								//upgrade_laser_flag = 0;
+								//upgrade_waveClear_flag = 0;
+								powerup_ct[bigMissile_Idx] = 4;	// set 3 charges
+							}else if(powerup[powerupIdx].image == power_laser){
+								missile_laser.status = dead;
+								upgrade = laser;// enable secondary attack (laser)
+								//upgrade_laser_flag = 1;
+								//upgrade_bigMissile_flag = 0;
+								//upgrade_waveClear_flag = 0;
+								powerup_ct[laser_Idx] = 3;	// set 2 charges
+							}else if(powerup[powerupIdx].image == power_waveClear){
+								upgrade = waveclear;	// enable secondary attack (waveClear)
+								//upgrade_waveClear_flag = 1;
+								//upgrade_laser_flag = 0;
+								//upgrade_bigMissile_flag = 0;
+								powerup_ct[waveClear_Idx] = 2;				// set 1 charge
+							}
+							missile_LED.status = dead;	// update missile status to DYING NOT DEAD
+							bigMissileCollision_flag = 1;// set collision flag
+						}
+
+					}//end of if-statement for collision check on all 4 sides
+		 }// skip is big missile is dead
+		
+		 // laser check
+		 if(missile_laser.status != dead){
+					if(powerup[powerupIdx].status == alive){	// skip collision detection if powerup is dead
+						// check vertical overlap (top)
+						if((((missile_laser.y < powerup[powerupIdx].y) && (missile_laser.y > (powerup[powerupIdx].y - powerup[powerupIdx].height))) ||
+						// check vertical overlap (bottom)
+						(((missile_laser.y - missile_laser.height) < powerup[powerupIdx].y) && ((missile_laser.y - missile_laser.height) > (powerup[powerupIdx].y - powerup[powerupIdx].height)))) &&
+						// check horizontal overlap (right)
+						(((missile_laser.x > powerup[powerupIdx].x) && (missile_laser.x < (powerup[powerupIdx].x + powerup[powerupIdx].width))) ||	
+						// check horizontal overlap (left)
+						((missile_laser.x + missile_laser.width > powerup[powerupIdx].x) && (missile_laser.x + missile_laser.width < (powerup[powerupIdx].x + powerup[powerupIdx].width))))){
+							powerup[powerupIdx].status = dying;
+							if(powerup[powerupIdx].image == power_LED){
+								upgrade = led;	// enable secondary attack (big missile)
+								//upgrade_bigMissile_flag = 1;
+								//upgrade_laser_flag = 0;
+								//upgrade_waveClear_flag = 0;
+								powerup_ct[bigMissile_Idx] = 4;	// set 3 charges
+							}else if(powerup[powerupIdx].image == power_laser){
+								upgrade = laser;// enable secondary attack (laser)
+								//upgrade_laser_flag = 1;
+								//upgrade_bigMissile_flag = 0;
+								//upgrade_waveClear_flag = 0;
+								powerup_ct[laser_Idx] = 3;	// set 2 charges
+							}else if(powerup[powerupIdx].image == power_waveClear){
+								upgrade = waveclear;	// enable secondary attack (waveClear)
+								//upgrade_waveClear_flag = 1;
+								//upgrade_laser_flag = 0;
+								//upgrade_bigMissile_flag = 0;
+								powerup_ct[waveClear_Idx] = 2;				// set 1 charge
+							}
+						}
+					}//end of if-statement for collision check on all 4 sides
+		 }// skip is laser is dead
+		
+}// end of DetectMissilePowerupCollision() function
+
+
+
+
+
+
+void DetectMissileEnemyCollision(void){
+			 //Basic missile collision detection
+		for(int i = 0; i < 2; i++){
+			if(missiles[i].status == moving){
+						for(int k = 0; k < 4; k++){ //for each of 4 rows
+							if(wave[wave_number].row_clear[k] == 0){ //only check kth row if clear flag not set
+								for(int j = 0; j < 4; j++){
+									if(wave[wave_number].enemy[k][j].status == alive){	// skip collision detection if enemy is dead
+										// check vertical overlap (top)
+										if((((missiles[i].y < wave[wave_number].enemy[k][j].y) && (missiles[i].y > (wave[wave_number].enemy[k][j].y - wave[wave_number].enemy[k][j].height))) ||
+										// check vertical overlap (bottom)
+										(((missiles[i].y - missiles[i].height) < wave[wave_number].enemy[k][j].y) && ((missiles[i].y - missiles[i].height) > (wave[wave_number].enemy[k][j].y - wave[wave_number].enemy[k][j].height)))) &&
+										// check horizontal overlap (right)
+										(((missiles[i].x > wave[wave_number].enemy[k][j].x) && (missiles[i].x < (wave[wave_number].enemy[k][j].x + wave[wave_number].enemy[k][j].width))) ||	
+										// check horizontal overlap (left)
+										((missiles[i].x + missiles[i].width > wave[wave_number].enemy[k][j].x) && (missiles[i].x + missiles[i].width < (wave[wave_number].enemy[k][j].x + wave[wave_number].enemy[k][j].width))))){
+											wave[wave_number].enemy[k][j].health -= 1;
+											if(wave[wave_number].enemy[k][j].health == 0){
+												wave[wave_number].enemy[k][j].status = dying;  		// update enemy sprite status to DYING INSTEAD OF DEAD
+												wave[wave_number].enemy[k][j].collision_flag = 1;	// set collision flag
+												total_score += wave[wave_number].enemy[k][j].score; // add the dying enemy's score value to the total_score global variable
+												explosion_frame = 0;
+												explosion_counter = 1;
+												if(explosion_done == 0){		//if previous explosion is not done yet once another collosion occurs, set clear_explosion_early flag and save previous coordinates before overwriting
+													clear_explosion_early = 1;
+													x_save = explosion_anim[4].x;
+													y_save = explosion_anim[4].y;
+												}
+												for(int i = 0; i < 5; i++){
+													explosion_anim[i].status = alive;
+													explosion_anim[i].x = (wave[wave_number].enemy[k][j].x - 2); //center explosion at middle of enemy sprite
+													explosion_anim[i].y = (wave[wave_number].enemy[k][j].y + 10);
+												}	
+											sound_pointer = explosion2; //set current_sound to explosion only if enemy health becomes 0 (replace w explosion1 if new sound doesn't fit animiation)
+											sound_length = 6919;				//set sound length (<-- change to 6919 if using explosion with louder volume
+											sound_index = 0;						//reset index
+												
+											}//end of if-statement for health == 0
+											else{	// different sound effect if enemy health not reduced to 0
+												sound_pointer = enemyoof;	
+												sound_length = 2672;
+												sound_index = 0;
+											}
+											missiles[i].status = dying;	// update missile status to DYING NOT DEAD
+											missileCollisionFlag[i] = 1;// set collision flag
+										}//end of if-statement for collision check on all 4 sides
+									}
+								}//iterate for each of 4 enemies
+							}//only check uncleared rows
+						}//iterate for each of 4 rows
+					}
+			 }//end of basic missile collision detection*****************************************
+		
+			 //Big LED missile collision detection
+			 if(missile_LED.status == moving){
+					for(int k = 0; k < 4; k++){ //for each of 4 rows
+						if(wave[wave_number].row_clear[k] == 0){ //only check kth row if clear flag not set
+							for(int j = 0; j < 4; j++){
+								if(wave[wave_number].enemy[k][j].status == alive){	// skip collision detection if enemy is dead
+									// check vertical overlap (top)
+									if((((missile_LED.y < wave[wave_number].enemy[k][j].y) && (missile_LED.y > (wave[wave_number].enemy[k][j].y - wave[wave_number].enemy[k][j].height))) ||
+									// check vertical overlap (bottom)
+									(((missile_LED.y - missile_LED.height) < wave[wave_number].enemy[k][j].y) && ((missile_LED.y - missile_LED.height) > (wave[wave_number].enemy[k][j].y - wave[wave_number].enemy[k][j].height)))) &&
+									// check horizontal overlap (right)
+									(((missile_LED.x > wave[wave_number].enemy[k][j].x) && (missile_LED.x < (wave[wave_number].enemy[k][j].x + wave[wave_number].enemy[k][j].width))) ||	
+									// check horizontal overlap (left)
+									((missile_LED.x + missile_LED.width > wave[wave_number].enemy[k][j].x) && (missile_LED.x + missile_LED.width < (wave[wave_number].enemy[k][j].x + wave[wave_number].enemy[k][j].width))))){
+										wave[wave_number].enemy[k][j].health -= 1;
+										if(wave[wave_number].enemy[k][j].health == 0){
+											wave[wave_number].enemy[k][j].status = dying;  		// update enemy sprite status to DYING INSTEAD OF DEAD
+											wave[wave_number].enemy[k][j].collision_flag = 1;	// set collision flag
+											total_score += wave[wave_number].enemy[k][j].score; // add the dying enemy's score value to the total_score global variable
+											explosion_frame = 0;
+											explosion_counter = 1;
+											if(explosion_done == 0){		//if previous explosion is not done yet once another collosion occurs, set clear_explosion_early flag and save previous coordinates before overwriting
+												clear_explosion_early = 1;
+												x_save = explosion_anim[4].x;
+												y_save = explosion_anim[4].y;
+											}
+											for(int i = 0; i < 5; i++){
+												explosion_anim[i].status = alive;
+												explosion_anim[i].x = (wave[wave_number].enemy[k][j].x - 2); //center explosion at middle of enemy sprite
+												explosion_anim[i].y = (wave[wave_number].enemy[k][j].y + 10);
+											}	
+										sound_pointer = explosion2; //set current_sound to explosion only if enemy health becomes 0 (replace w explosion1 if new sound doesn't fit animiation)
+										sound_length = 6919;				//set sound length (<-- change to 6919 if using explosion with louder volume
+										sound_index = 0;						//reset index
+											
+										}//end of if-statement for health == 0
+										else{	// different sound effect if enemy health not reduced to 0
+											sound_pointer = enemyoof;	
+											sound_length = 2672;
+											sound_index = 0;
+										}
+										missile_LED.status = dying;	// update missile status to DYING NOT DEAD
+										bigMissileCollision_flag = 1;// set collision flag		
+									}//end of if-statement for collision check on all 4 sides
+								}
+							}//iterate for each of 4 enemies
+						}//only check uncleared rows
+					}//iterate for each of 4 rows
+			 }//end of big missile collision detection*****************************************
+		
+			 //Laser collision detection
+		if(missile_laser.status == moving){
+					for(int k = 0; k < 4; k++){ //for each of 4 rows
+						if(wave[wave_number].row_clear[k] == 0){ //only check kth row if clear flag not set
+							for(int j = 0; j < 4; j++){
+								if(wave[wave_number].enemy[k][j].status == alive){	// skip collision detection if enemy is dead
+									// check vertical overlap (top)
+									if((((missile_laser.y < wave[wave_number].enemy[k][j].y) && (missile_laser.y > (wave[wave_number].enemy[k][j].y - wave[wave_number].enemy[k][j].height))) ||
+									// check vertical overlap (bottom)
+									(((missile_laser.y - missile_laser.height) < wave[wave_number].enemy[k][j].y) && ((missile_laser.y - missile_laser.height) > (wave[wave_number].enemy[k][j].y - wave[wave_number].enemy[k][j].height)))) &&
+									// check horizontal overlap (right)
+									(((missile_laser.x > wave[wave_number].enemy[k][j].x) && (missile_laser.x < (wave[wave_number].enemy[k][j].x + wave[wave_number].enemy[k][j].width))) ||	
+									// check horizontal overlap (left)
+									((missile_laser.x + missile_laser.width > wave[wave_number].enemy[k][j].x) && (missile_laser.x + missile_laser.width < (wave[wave_number].enemy[k][j].x + wave[wave_number].enemy[k][j].width))))){
+										wave[wave_number].enemy[k][j].health -= 1;
+										if(wave[wave_number].enemy[k][j].health == 0){
+											wave[wave_number].enemy[k][j].status = dying;  		// update enemy sprite status to DYING INSTEAD OF DEAD
+											wave[wave_number].enemy[k][j].collision_flag = 1;	// set collision flag
+											total_score += wave[wave_number].enemy[k][j].score; // add the dying enemy's score value to the total_score global variable
+											explosion_frame = 0;
+											explosion_counter = 1;
+											if(explosion_done == 0){		//if previous explosion is not done yet once another collosion occurs, set clear_explosion_early flag and save previous coordinates before overwriting
+												clear_explosion_early = 1;
+												x_save = explosion_anim[4].x;
+												y_save = explosion_anim[4].y;
+											}
+											for(int i = 0; i < 5; i++){
+												explosion_anim[i].status = alive;
+												explosion_anim[i].x = (wave[wave_number].enemy[k][j].x - 2); //center explosion at middle of enemy sprite
+												explosion_anim[i].y = (wave[wave_number].enemy[k][j].y + 10);
+											}	
+										sound_pointer = explosion2; //set current_sound to explosion only if enemy health becomes 0 (replace w explosion1 if new sound doesn't fit animiation)
+										sound_length = 6919;				//set sound length (<-- change to 6919 if using explosion with louder volume
+										sound_index = 0;						//reset index
+											
+										}//end of if-statement for health == 0
+										else{	// different sound effect if enemy health not reduced to 0
+											sound_pointer = enemyoof;	
+											sound_length = 2672;
+											sound_index = 0;
+										}	
+									}//end of if-statement for collision check on all 4 sides
+								}
+							}//iterate for each of 4 enemies
+						}//only check uncleared rows
+					}//iterate for each of 4 rows
+			 }//end of laser collision detection*****************************************
+	
+}// end of DetectMissileEnemyCollision() function
+
+
+void PowerupMovement_PositionUpdate(void){
+				//Set powerup status to alive if the powerupSpawn flag is still 0 (reset to 0 again before each new wave)
+				if(powerupSpawn == 0){// if powerup has not yet spawned
+						powerup[powerupIdx].status = alive;
+						powerupSpawn = 1;	// set flag
+				}
+				
+				//Update powerup position if the powerup status is alive (MOVES LEFT ACROSS THE SCREEN NEAR THE PLAYER BEFORE EACH WAVE SPAWNS
+				if(powerup[powerupIdx].status == alive){
+					if((powerup[powerupIdx].x + powerup[powerupIdx].width) <= 0){// if power-up has reached left side, kill it
+							powerup[powerupIdx].status = dead;
+					}
+					else{
+							powerup[powerupIdx].x -=1;	// else, move power-up left
+					}
+				}	
+}// end of PowerupMovement_PositionUpdate() function
+
+
+void EnemyMovement_PositionUpdate(void){
+		 //Enemy wave movement
+			if(wave[wave_number].clear == 0){ // only move enemies if wave is not cleared already
+				 for(int i = 0; i < 4; i++){ // check each row
+						if(wave[wave_number].row_clear[i] == 0 && wave[wave_number].row_spawn[i] == 1){//skip movement decision if ith row is cleared or not spawned yet
+								for(int j = 0; j<4; j++){ // check each enemy in the ith row
+										if(wave[wave_number].enemy[i][j].status == alive){ // only move enemies that are alive
+												if(moveRightInit_ct[i][j] > 0){// row of enemies initially moves 26 pixels to right right from center
+																if(wave[wave_number].enemy[i][j].image == enemy_keil){
+																	wave[wave_number].enemy[i][j].x += 2; // motor enemies move 2 pixels right(faster speed)
+																}
+																else
+																{
+																	wave[wave_number].enemy[i][j].x += 1; // any other enemy moves 1 pixel right
+																}
+														moveRightInit_ct[i][j]--;
+														if(moveRightInit_ct[i][j] == 0){// if max right position reached, set count to move down (on the right side)
+																moveDownR_ct[i][j] = 10;
+														}
+												}	
+												else if(moveRight_ct[i][j] > 0){	// move row of enemies right
+														moveEnemyRight(wave_number, i, j); // increment enemy's x position to the right depending on its speed attribute
+														moveRight_ct[i][j]--;
+														if(moveRight_ct[i][j] == 0){		// if right border reached, set count to move down (on the right side)
+															moveDownR_ct[i][j] = 10;
+														}
+												}
+												else if(moveDownR_ct[i][j] > 0){	// move row of enemies down (on the right side)
+														moveEnemyDown(wave_number, i, j); // decrement enemy's y position by 1 pixel regardless of speed (steppermotor enemy slows down at the walls)
+														moveDownR_ct[i][j]--;
+														if(moveDownR_ct[i][j] == 0){		// if row has moved down 10 pixels, set count to move left
+															moveLeft_ct[i][j] = 52/(wave[wave_number].enemy[i][j].speed); // movement reload counter is dependent on the enemy's speed attribute (for motor: moves 2 pixels at a time, 26 times)
+														}
+												}	
+												else if(moveLeft_ct[i][j] > 0){		// move row of enemies left
+														moveEnemyLeft(wave_number, i, j); // decrement enemy's x position to the left depending on its speed attribute
+														moveLeft_ct[i][j]--;
+														if(moveLeft_ct[i][j] == 0){			// if left border reached, set count to move down (on the left side)
+															moveDownL_ct[i][j] = 10;
+														}
+												}
+												else if(moveDownL_ct[i][j] > 0){	// if row has moved down 10 pixels, set count to move right
+														moveEnemyDown(wave_number, i, j); // decrement enemy's y position by 1 pixel regardless of speed (steppermotor enemy slows down at the walls)
+														moveDownL_ct[i][j]--;
+														if(moveDownL_ct[i][j] == 0){		// if row has moved down 10 pixels, set count to move right
+															moveRight_ct[i][j] = 52/(wave[wave_number].enemy[i][j].speed);  // movement reload counter is dependent on the enemy's speed attribute (for motor: moves 2 pixels at a time, 26 times)
+														}
+												}
+												
+										}//inner if_statement (skip to here is enemy is not alive yet aka either dead or unspawned)
+								}//j-loop... iterate for each enemy
+						}//if-statement (skip ith row  if row is cleared or not spawned)
+				}//outer i-loop... iterate for each row
+			}//outermost if-statement...don't do any movement if current wave is already clear
+			
+}// end of EnemyMovement_PositionUpdate() function
+
+
+// checks which enemies are dead and updates wave[wave_number].clear and wave[wave_number].row_clear[4] attributes accordingly
+void UpdateWaveStructAttr(void){
+			if(wave[wave_number].clear == 0){ // no need to update clearing attributes if the current wave is already clear
+					 for(int i=0; i<4; i++){ //iterate for each row
+							for(int j=0; j<4; j++){ //iterate for each enemy
+									if(wave[wave_number].enemy[i][j].status == dead){
+										deadcounter++;
+									}
+							}
+							if(deadcounter == 4)
+							{
+								wave[wave_number].row_clear[i] = 1;			//set atttribute flag if all enemies in the ith row are dead
+							}
+							totaldeadcounter += deadcounter;
+							deadcounter = 0;	//reset counter
+					 }
+					
+					 if(totaldeadcounter == 16){	//check if whole wave is dead
+							wave[wave_number].clear = 1;							//set attribute flag if whole wave clear
+							//wave_number++;	//increment wave_number only if whole wave is dead
+					 }
+					 totaldeadcounter = 0;		//reset counter
+		}
+}// end of UpdateWaveStructAttr() function
