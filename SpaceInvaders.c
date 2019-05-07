@@ -475,7 +475,8 @@ int main(void){
 		//**** UPDATE POWERUP POSITION****
 		if((powerup[powerupIdx].status == alive) && (powerup[powerupIdx].x + powerup[powerupIdx].width != 0)){// if power-up has reached left side, kill it
 			ST7735_DrawBitmap(powerup[powerupIdx].x, powerup[powerupIdx].y, powerup[powerupIdx].image, powerup[powerupIdx].width, powerup[powerupIdx].height);
-		}else if(powerup[powerupIdx].status == dying){
+		}
+		else if(powerup[powerupIdx].status == dying){
 				ST7735_FillRect(powerup[powerupIdx].x, powerup[powerupIdx].y - powerup[powerupIdx].height + 1, powerup[powerupIdx].width, powerup[powerupIdx].height, 0x0000);
 				powerup[powerupIdx].status = dead;
 		}
@@ -500,6 +501,7 @@ int main(void){
 //ADD MESSAGES ABOUT WAVE CLEAR HERE OR SOME DELAY UNTIL NEXT WAVE SPAWNS**************************************************************************	
 																				// no need to print wave cleared text if player already died
 			if(wave[wave_number].clear == 2 && disable_player_controls == 0){ //set to 1 when deadcounter is 16, set to 2 when last enemy explosion ends
+						DisableInterrupts();	// disable interrupts after the wave dies (no movement needed)
 						switch(wave_number){
 							case 0:
 								ST7735_DrawString(4, 3, msg1pt, 0xFFFF);
@@ -524,6 +526,7 @@ int main(void){
 			
 		//ADD THIS IN LATER-- delay a few seconds, overwrite text on screen, then clear the wave_spawn_done flag and reset current_row_number to 0
 			Delay100ms(20); //POST ON PIAZZA IF WE CAN USE DELAYS IF WE ALREADY HAVE 4 INTERRUPTS (break between waves of enemies)
+			EnableInterrupts();
 			ST7735_FillRect(19, 20, 107, 21, 0x0000);  //clear text
 			current_row_number = 0;
 			wave_spawn_done = 0;
@@ -732,8 +735,8 @@ void SysTick_Handler(void){ // every 16.67 ms
 												explosion_anim[i].x = (wave[wave_number].enemy[k][j].x - 2); //center explosion at middle of enemy sprite
 												explosion_anim[i].y = (wave[wave_number].enemy[k][j].y + 10);
 											}	
-										sound_pointer = explosion1; //set current_sound to explosion only if enemy health becomes 0 (replace w explosion1 if new sound doesn't fit animiation)
-										sound_length = 6963;				//set sound length (<-- change to 6964 if using explosion 1)
+										sound_pointer = explosion2; //set current_sound to explosion only if enemy health becomes 0 (replace w explosion1 if new sound doesn't fit animiation)
+										sound_length = 6919;				//set sound length (<-- change to 6919 if using explosion with louder volume
 										sound_index = 0;						//reset index
 											
 										}//end of if-statement for health == 0
@@ -758,31 +761,33 @@ void SysTick_Handler(void){ // every 16.67 ms
 //**** POWERUP-MISSILE COLLISION DETECTION
 	if(disable_player_controls != 1){ // no need to check for collision if player already died
 		for(int i = 0; i < 2; i++){
-			if(powerup[powerupIdx].status == alive){	// skip collision detection if enemy is dead
-				// check vertical overlap (top)
-				if((((missiles[i].y < powerup[powerupIdx].y) && (missiles[i].y > (powerup[powerupIdx].y - powerup[powerupIdx].height))) ||
-				// check vertical overlap (bottom)
-				(((missiles[i].y - missiles[i].height) < powerup[powerupIdx].y) && ((missiles[i].y - missiles[i].height) > (powerup[powerupIdx].y - powerup[powerupIdx].height)))) &&
-				// check horizontal overlap (right)
-				(((missiles[i].x > powerup[powerupIdx].x) && (missiles[i].x < (powerup[powerupIdx].x + powerup[powerupIdx].width))) ||	
-				// check horizontal overlap (left)
-				((missiles[i].x + missiles[i].width > powerup[powerupIdx].x) && (missiles[i].x + missiles[i].width < (powerup[powerupIdx].x + powerup[powerupIdx].width))))){
-					powerup[powerupIdx].status = dying;
-					if(powerup[powerupIdx].image == power_LED){
-						upgrade = led;	// enable secondary attack (big missile)
-						powerup_ct = 3;	// set 3 charges
-					}else if(powerup[powerupIdx].image == power_laser){
-						upgrade = laser;// enable secondary attack (laser)
-						powerup_ct = 2;	// set 2 charges
-					}else if(powerup[powerupIdx].image == power_waveClear){
-						upgrade = waveclear;	// enable secondary attack (waveClear)
-						powerup_ct = 1;				// set 1 charge
-					}
-					missiles[i].status = dying;	// update missile status to DYING NOT DEAD
-					missileCollisionFlag[i] = 1;// set collision flag
-				}
+			if(missiles[i].status != dead){
+					if(powerup[powerupIdx].status == alive){	// skip collision detection if enemy is dead
+						// check vertical overlap (top)
+						if((((missiles[i].y < powerup[powerupIdx].y) && (missiles[i].y > (powerup[powerupIdx].y - powerup[powerupIdx].height))) ||
+						// check vertical overlap (bottom)
+						(((missiles[i].y - missiles[i].height) < powerup[powerupIdx].y) && ((missiles[i].y - missiles[i].height) > (powerup[powerupIdx].y - powerup[powerupIdx].height)))) &&
+						// check horizontal overlap (right)
+						(((missiles[i].x > powerup[powerupIdx].x) && (missiles[i].x < (powerup[powerupIdx].x + powerup[powerupIdx].width))) ||	
+						// check horizontal overlap (left)
+						((missiles[i].x + missiles[i].width > powerup[powerupIdx].x) && (missiles[i].x + missiles[i].width < (powerup[powerupIdx].x + powerup[powerupIdx].width))))){
+							powerup[powerupIdx].status = dying;
+							if(powerup[powerupIdx].image == power_LED){
+								upgrade = led;	// enable secondary attack (big missile)
+								powerup_ct = 3;	// set 3 charges
+							}else if(powerup[powerupIdx].image == power_laser){
+								upgrade = laser;// enable secondary attack (laser)
+								powerup_ct = 2;	// set 2 charges
+							}else if(powerup[powerupIdx].image == power_waveClear){
+								upgrade = waveclear;	// enable secondary attack (waveClear)
+								powerup_ct = 1;				// set 1 charge
+							}
+							missiles[i].status = dying;	// update missile status to DYING NOT DEAD
+							missileCollisionFlag[i] = 1;// set collision flag
+						}
 
-			}//end of if-statement for collision check on all 4 sides
+					}//end of if-statement for collision check on all 4 sides
+			}
 		}
 	}
 
@@ -794,7 +799,7 @@ void SysTick_Handler(void){ // every 16.67 ms
 	}
 	// update powerup position
 	if(powerup[powerupIdx].status == alive){
-		if(powerup[powerupIdx].x + powerup[powerupIdx].width == 0){// if power-up has reached left side, kill it
+		if((powerup[powerupIdx].x + powerup[powerupIdx].width) <= 0){// if power-up has reached left side, kill it
 			powerup[powerupIdx].status = dead;
 		}else{
 			powerup[powerupIdx].x -=1;	// else, move power-up left
@@ -910,12 +915,12 @@ void playsound(void){
 						sound_index = sound_index_save;
 						if(sound_index >= sound_length) //if interrupted sound effect happened to finish during the laser5 sound, then just set sound_pointer to silence and index back to 0
 						{
-									if(sound_pointer == game_over_screen){
-										sound_index = 0;
-									}
-									else{
+									//if(sound_pointer == game_over_screen){
+									//	sound_index = 0;
+									//}
+								//	else{
 										sound_pointer = silence;
-									}
+								//	}
 									//sound_index = 0; // sound index is set manually before pointer is reloaded
 						}
 					}
@@ -1278,9 +1283,9 @@ void gameOver(void){
 		TIMER2_IMR_R = 0x00000000;    // disable timeout interrupt for timer2 that controls player primary fire missile speed
 	
 	// ending screen music not working as of now
-		sound_pointer = game_over_screen;
-		sound_length = 115456; // check if there is enough storage for 11 sec song clip
-		sound_index= 0;
+		//sound_pointer = game_over_screen;
+		//sound_length = 115456; // check if there is enough storage for 11 sec song clip
+		//sound_index= 0;
 	
 	ST7735_FillScreen(0x0000);
 	ST7735_DrawString(2, 6, msg_gameOver_line1, 0xFFFF);
@@ -1292,5 +1297,5 @@ void gameOver(void){
 	}
 	scorept[4] = 0; // null terminate the last element in the scorept char array
 	ST7735_DrawString(15, 8, scorept, 0xFFFF);
-	while(sound_pointer == game_over_screen){} //stay in this loop forever to keep playing music and freeze text
+	//while(sound_pointer == game_over_screen){} //stay in this loop forever to keep playing music and freeze text
 }

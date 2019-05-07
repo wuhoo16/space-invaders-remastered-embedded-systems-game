@@ -9,12 +9,11 @@
 #include <stdint.h>
 extern const unsigned char silence[1];
 extern const unsigned char laser5[3600];
-extern const unsigned char explosion1[6963]; //exactly ms
-//extern const unsigned char explosion2[6510]; // about .6 seconds == 600 ms
+//extern const unsigned char explosion1[6963]; //the old explosion audio (bad volume)
+extern const unsigned char explosion2[6919]; // 0.628 seconds == 628 ms
 extern const unsigned char enemyoof[2672]; //.242 secs
 extern const unsigned char playerdeathaudio[23748]; // about 2.15 secs
 extern const unsigned char dramaticexplosion[33248]; // about 3.02 seconds
-extern const unsigned char game_over_screen[115456]; // about 10.47 seconds
 
 //void Sound_Init(void);
 //void Sound_Play(const uint8_t *pt, uint32_t count);
