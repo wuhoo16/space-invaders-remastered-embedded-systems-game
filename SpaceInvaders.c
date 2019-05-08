@@ -197,6 +197,7 @@ int16_t adc_diff;
 //uint8_t update_player_position_flag = 0;
 uint8_t counter_125ms = 0; //used in animation periodic task (next row will not spawn until 3 second has passed since last row spawned)
 														//when counter_125ms = 24 then 3 seconds has passed
+uint8_t waitcounter = 0;
 
 uint32_t total_score = 0; //total_score is converted to a null terminated character array at the end of the game engine to display the score (using %10 and /10 then DrawString)
 uint32_t total_score_copy = 0; //used to convert score without overwriting game score
@@ -605,6 +606,7 @@ void animation_spawn_delay(void){
 	bigMissile_counter++;			// increment counter every 125 ms
 	laser_counter++;
 	waveClear_counter++;
+	waitcounter++;
 	
 	if(wave_spawn_done == 1){//if last row has been spawned, don't increment counter
 		counter_125ms = 0; //keep counter at 0 until next wave spawns (MAKE SURE TO CLEAR WAVE SPAWN DONE FLAG UPON THE SPAWN OF THE FIRST ROW OF NEXT WAVE)										
@@ -702,7 +704,7 @@ void powerupInit(void){
 		}else if(i == 2){
 			powerup[i].image = power_waveClear;
 		}else if(i == 3){
-			powerup[i].image = power_LED;
+			powerup[i].image = power_laser; // changed last powerup to laser to help deal w tanks
 		}
 		powerup[i].status = dead;
 	}
@@ -878,8 +880,8 @@ void wave2Init(void){	//intializing each wave separately in case we want differe
 					else if(i == 3){ // fourth row
 						wave[2].enemy[i][j].image = enemy_debug;
 						wave[2].enemy[i][j].speed = 1;
-						wave[2].enemy[i][j].health = 6;
-						wave[2].enemy[i][j].score = 60;
+						wave[2].enemy[i][j].health = 5;
+						wave[2].enemy[i][j].score = 50;
 					}
 			
 			
@@ -902,27 +904,27 @@ void wave3Init(void){	//intializing each wave separately in case we want differe
 					if(i == 0){				// first row
 						wave[3].enemy[i][j].image = enemy_debug;
 						wave[3].enemy[i][j].speed = 1;
-						wave[3].enemy[i][j].health = 6;
-						wave[3].enemy[i][j].score = 60;
+						wave[3].enemy[i][j].health = 5;
+						wave[3].enemy[i][j].score = 50;
 					}
 					else if(i == 1){ // second row
 						wave[3].enemy[i][j].image = enemy_debug;
 						wave[3].enemy[i][j].speed = 1;
-						wave[3].enemy[i][j].health = 6;
-						wave[3].enemy[i][j].score = 60;
+						wave[3].enemy[i][j].health = 5;
+						wave[3].enemy[i][j].score = 50;
 						
 					}
 					else if(i == 2){ // third row
 						wave[3].enemy[i][j].image = enemy_debug;
 						wave[3].enemy[i][j].speed = 1;
-						wave[3].enemy[i][j].health = 6;
-						wave[3].enemy[i][j].score = 60;
+						wave[3].enemy[i][j].health = 5;
+						wave[3].enemy[i][j].score = 50;
 					}
 					else if(i == 3){ // fourth row
 						wave[3].enemy[i][j].image = enemy_debug;
 						wave[3].enemy[i][j].speed = 1;
-						wave[3].enemy[i][j].health = 6;
-						wave[3].enemy[i][j].score = 60;
+						wave[3].enemy[i][j].health = 5;
+						wave[3].enemy[i][j].score = 50;
 					}
 					
 		}
@@ -989,10 +991,8 @@ void gameOver(void){ // ONLY RUNS THIS FUNCTION IF game_Over_flag == 2 (which is
 				TIMER2_CTL_R = 0x00000000;    // disable timer2
 				TIMER2_IMR_R = 0x00000000;    // disable timeout interrupt for timer2 that controls player primary fire missile speed
 			
-			// ending screen music not working as of now
-				//sound_pointer = game_over_screen;
-				//sound_length = 115456; // check if there is enough storage for 11 sec song clip
-				//sound_index= 0;
+			
+
 			
 			ST7735_FillScreen(0x0000);
 			ST7735_DrawString(2, 6, msg_gameOver_line1, 0xFFFF);
@@ -1004,6 +1004,11 @@ void gameOver(void){ // ONLY RUNS THIS FUNCTION IF game_Over_flag == 2 (which is
 			}
 			scorept[4] = 0; // null terminate the last element in the scorept char array
 			ST7735_DrawString(15, 8, scorept, 0xFFFF);
+			
+			// ending screen music not working as of now
+			sound_pointer = gameover;
+			sound_length = 40631; // check if there is enough storage for 11 sec song clip
+			sound_index= 0;
 			while(1){} //freeze the game on the game over screen permanantly
 			//while(sound_pointer == game_over_screen){} //stay in this loop forever to keep playing music and freeze text
 		}
@@ -1020,7 +1025,7 @@ void gameOverEnemyDeathAnimation(void){
 				 // Only fill over enemies that are not the colliding enemies
 						for(int i = 0; i < 4; i++){
 							 for(int j = 0; j < 4; j++){
-									if(wave[wave_number].enemy[i][j].status != dead){ // no need to fill enemies that are already dead
+									//if(wave[wave_number].enemy[i][j].status != dead){ // no need to fill enemies that are already dead
 										 if(i != collided_enemy_i){
 												for(int k = 0; k < j_index; k++){
 														if(j != collided_enemies_j[k]){
@@ -1028,7 +1033,7 @@ void gameOverEnemyDeathAnimation(void){
 														}
 												}
 										 }
-									 }
+									 //}
 							 }
 						}
 	
@@ -1183,6 +1188,10 @@ void spawnBigMissile(void){
 					bigMissile_spawn = 0;					//clear flag
 					ST7735_DrawBitmap(missile_LED.x, missile_LED.y, missile_LED.image, missile_LED.width, missile_LED.height);
 					powerup_ct[bigMissile_Idx]--;	// decrement charge count once the big LED missile is drawn
+					if(powerup_ct[bigMissile_Idx] == 0){
+						 upgrade = unequipped;
+						 waitcounter = 0;
+					}
 					firerate_limit_counter = -2;		//reset counter once missile has spawned (at least 500 ms must pass after a secondary missile is fired to fire a primary missile) 	
 					bigMissile_counter = 0; // reset to 0 once big LED missile has spawned (now 500 ms must pass before the player can fire the next big LED charge)
 					missile_LED.status = moving;
@@ -1195,6 +1204,10 @@ void spawnLaser(void){
 					laser_spawn = 0;					//clear flag
 					ST7735_DrawBitmap(missile_laser.x, missile_laser.y, laserFrame[laserFrame_idx], missile_laser.width, missile_laser.height);
 					powerup_ct[laser_Idx]--;	// decrement charge count
+			 		if(powerup_ct[laser_Idx] == 0){
+						 upgrade = unequipped;
+							waitcounter = 0;
+					}
 					firerate_limit_counter = -2;		//reset counter once missile has spawned (at least 500 ms must pass between a secondary missile fired and the next primary missile) 		 				  
 					laser_counter = 0; 		// reset to 0 once laser proj has spawned (now 500 ms must pass before the player can fire the next laser charge)
 					missile_laser.status = moving;
@@ -1427,6 +1440,14 @@ void printWaveClearedMessages(void){
 
 
 void printWinScreen(void){
+	   //NVIC_ST_CTRL_R = 0x005; // Disable SysTick Interrupts since game has been won
+	  	NVIC_ST_CTRL_R = 0x0000; // disable all SysTick Interrupts
+			TIMER0_CTL_R = 0x00000000;    // disable timer0
+			TIMER0_IMR_R = 0x00000000;    // disable timeout interrupt for timer0 that controls animation counters and spawn counters
+			TIMER2_CTL_R = 0x00000000;    // disable timer2
+			TIMER2_IMR_R = 0x00000000;    // disable timeout interrupt for timer2 that controls player primary fire missile speed
+		EnableInterrupts(); //allow timer1 to play sounds
+	
 		ST7735_DrawString(5,6, winpmsgpt, 0xFFFF);	//you passed.
 	  ST7735_DrawString(2, 7, msg_finalscore, 0xFFFF); 
 			for(int i = 3; i >= 0; i--){ //convert 4 digit integer score to char array scorept
@@ -1435,6 +1456,9 @@ void printWinScreen(void){
 			}
 			scorept[4] = 0; // null terminate the last element in the scorept char array
 			ST7735_DrawString(15, 7, scorept, 0xFFFF);
+			sound_pointer = winmusic;
+			sound_length = 47482;
+			sound_index = 0;
 			while(1){} //freeze the game on the game over screen permanantly
 }// end of func
 
@@ -1639,6 +1663,12 @@ void DetectPE0(void){
 void DetectPE1(void){
 		 if(gameOver_flag == 0){ // player can only fire secondary missiles if they have not died
 			 SW1 = (PE1 >> 1); //SAVE THE PE1 DATA INTO SW1 GLOB VAR
+			 if((SW1 == 1) && (waitcounter > 3) && (upgrade == unequipped)){ // if PLAYER CLICKS SECONDARY FIRE AND nothing equipped/out of charges --> give error sound as feedback
+					sound_pointer = nocharges;
+					sound_length = 7057;
+					sound_index = 0;
+				  waitcounter = 0;
+				}
 				if((SW1 == 1) && (upgrade != unequipped)){
 					//SW1 = (PE1 >> 1); // read from port e pin 1 to clear the data
 					// Fire big missile
@@ -1715,6 +1745,7 @@ void DetectPE1(void){
 														}// only check enemies that are alive
 													}//iterate for each of 4 enemies
 													powerup_ct[waveClear_Idx]--;
+													upgrade = unequipped;
 													waveClearDone_flag = 1;	// flag for possible use
 													waveClear_counter = 2; // counter = 2 enables one of the conditions saying that previous waveclear is done
 													break;
@@ -1744,6 +1775,11 @@ void DetectMissilePowerupCollision(void){
 							// check horizontal overlap (left)
 							((missiles[i].x + missiles[i].width > powerup[powerupIdx].x) && (missiles[i].x + missiles[i].width < (powerup[powerupIdx].x + powerup[powerupIdx].width))))){
 								powerup[powerupIdx].status = dying;
+							
+								sound_pointer = powerupequipped;
+						    sound_length = 6515;
+							  sound_index = 0;
+							 
 								if(powerup[powerupIdx].image == power_LED){
 									upgrade = led;	// enable secondary attack (big missile)
 									powerup_ct[bigMissile_Idx] = 3;	// set 3 charges
@@ -1880,7 +1916,7 @@ void DetectMissileEnemyCollision(void){
 											}//end of if-statement for health == 0
 											else{	// different sound effect if enemy health not reduced to 0
 												sound_pointer = enemyoof;	
-												sound_length = 3183;
+												sound_length = 2617;
 												sound_index = 0;
 											}
 											missiles[i].status = dying;	// update missile status to DYING NOT DEAD
@@ -1931,7 +1967,7 @@ void DetectMissileEnemyCollision(void){
 										}//end of if-statement for health == 0
 										else{	// different sound effect if enemy health not reduced to 0
 											sound_pointer = enemyoof;	
-											sound_length = 3183;
+											sound_length = 2617;
 											sound_index = 0;
 										}
 										missile_LED.status = dying;	// update missile status to DYING NOT DEAD
@@ -1981,7 +2017,7 @@ void DetectMissileEnemyCollision(void){
 										}//end of if-statement for health == 0
 										else{	// different sound effect if enemy health not reduced to 0
 											sound_pointer = enemyoof;	
-											sound_length = 3183;
+											sound_length = 2617;
 											sound_index = 0;
 										}	
 									}//end of if-statement for collision check on all 4 sides

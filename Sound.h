@@ -14,8 +14,12 @@ extern const unsigned char laserFiringSound[10225]; // for laser secondary attac
 extern const unsigned char waveclearExplosionSound[21615]; // for waveclear secondary attack explosion audio (about 1.8 secs)
 //extern const unsigned char explosion1[6963]; //the old explosion audio (bad volume)
 extern const unsigned char explosion2[6960]; // 0.631 seconds == 631 ms
-extern const unsigned char enemyoof[3183]; //.289 secs
+extern const unsigned char enemyoof[2617]; //.237 secs
 extern const unsigned char playerdeathaudio[23748]; // about 2.15 secs
+extern const unsigned char powerupequipped[6515];
+extern const unsigned char nocharges[7057];
+extern const unsigned char gameover[40631];
+extern const unsigned char winmusic[47482];
 extern const unsigned char dramaticexplosion[33248]; // about 3.02 seconds
 
 //void Sound_Init(void);
@@ -28,6 +32,6 @@ extern const unsigned char dramaticexplosion[33248]; // about 3.02 seconds
 //void Sound_Fastinvader2(void);
 //void Sound_Fastinvader3(void);
 //void Sound_Fastinvader4(void);
-//void Sound_Highpitch(void);
+void Sound_Highpitch(void);
 
 #endif
