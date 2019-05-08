@@ -121,6 +121,7 @@ void explosionAnimationUpdate(void); // Draw NEWEXPLOSION_ANIM FRAMES AND CLEARI
 void movePowerup(void);
 void moveEnemies(void); // iterate through 4 rows, if row uncleared, draw bmp of new position for enemies that are still alive
 void printWaveClearedMessages(void); // uses a switch(wave_number) to print messages after each wave is cleared (using ST7735_DrawString)
+void printWinScreen(void);
 void waveClearedTransition(void); // DISABLES INTERRUPTS DURING FUNCTION, PRINT WAVE CLEARED MESSAGES, DELAYS 2 ms, AND DOES ALL VARIABLE RELOADS NEEDED FOR NEXT WAVE (such as current_row_number, movement_cts, powerup_spawn, wave_spawn flag...)
 void printCurrentScore(void); // converts total_score to a character array and draws 4 digit score to top left corner of LCD
 void spawnNextRow(void); // spawns new row every 3 seconds based on counter_125ms until current_row_number == 4
@@ -293,6 +294,7 @@ char msg2pt[15] = {'W', 'A', 'V', 'E', ' ', '2', ' ', 'C', 'L', 'E', 'A', 'R', '
 char msg3pt[15] = {'W', 'A', 'V', 'E', ' ', '3', ' ', 'C', 'L', 'E', 'A', 'R', 'E', 'D', 0};
 char msg4pt[15] = {'W', 'A', 'V', 'E', ' ', '4', ' ', 'C', 'L', 'E', 'A', 'R', 'E', 'D', 0};
 char msg5pt[15] = {'F', 'I', 'N', 'A', 'L', ' ', 'B', 'O', 'S' , 'S', 0};
+char winpmsgpt[] = {'Y', 'O', 'U', ' ', 'P', 'A', 'S', 'S', 'E', 'D', '.', 0}; // 11 characters
 char msg_gameOver_line1[] = {'G', 'A', 'M', 'E', ' ', 'O', 'V', 'E', 'R', ' ', 'S', 'T', 'U', 'D', 'E', 'N', 'T', '.', 0}; // 18 characters long (offset x column by 1)
 char msg_gameOver_line2[] ={'Y', 'O', 'U', ' ', 'F', 'A', 'I', 'L', 'E', 'D', ' ', 'E', 'E', '3', '1', '9', 'K', '.', 0}; // 18 characters long (offset by 1 as well)
 char msg_finalscore[] = {'F', 'I', 'N', 'A', 'L', ' ', 'S', 'C', 'O', 'R', 'E', ':', ' ', 0}; // 13 chars plus 4 chars for score = 17 chars (offset by 1)
@@ -346,9 +348,7 @@ int main(void){
 
 
 	
-  while(1){ // START OF GAME ENGINE //
-		
-		
+  while(1){ // START OF GAME ENGINE //	
 	//== GAME OVER CHECK IF PLAYER COLLISION WITH ENEMY DETECTED ====================================================================================================================
 			 if(player.status == dying && gameOver_flag == 1){ // run this if the enemy collided with player
 				  gameOverPlayerDeathAnimation(); // only runs this function if enemy collided with player gameOver_flag is set to 1
@@ -427,6 +427,7 @@ int main(void){
 		
 	//== WAVE CLEARED MESSAGES, DISABLE INTERRUPTS, DELAYS, AND VARIABLE RELOADS (IF CLEAR ATTRIBUTE == 2 FOR CURRENT WAVE STRUCT) =========================
 			 if(wave[wave_number].clear == 2){ //set to 1 when deadcounter is 16, set to 2 when last enemy explosion ends
+				 while(sound_pointer != silence){} // wait for last sound to finish before proceeding
 					waveClearedTransition(); // only do this transition after last enemy in the wave dies and explodes (ALL INTERRUPTS DISABLED IN THIS FUNCTION!!!)
 			 }
 	//======================================================================================================================================================
@@ -777,8 +778,8 @@ void wave0Init(void){	//intializing each wave separately in case we want differe
 					else if(i == 1){ // second row
 						wave[0].enemy[i][j].image = enemy_mydaq;
 						wave[0].enemy[i][j].speed = 1;
-						wave[0].enemy[i][j].health = 2;
-						wave[0].enemy[i][j].score = 20;
+						wave[0].enemy[i][j].health = 3;
+						wave[0].enemy[i][j].score = 30;
 						wave[0].enemy[i][j].status = unspawned;
 						
 					}
@@ -792,8 +793,8 @@ void wave0Init(void){	//intializing each wave separately in case we want differe
 					else if(i == 3){ // fourth row
 						wave[0].enemy[i][j].image = enemy_mydaq;
 						wave[0].enemy[i][j].speed = 1;
-						wave[0].enemy[i][j].health = 2;
-						wave[0].enemy[i][j].score = 20;
+						wave[0].enemy[i][j].health = 3;
+						wave[0].enemy[i][j].score = 30;
 						wave[0].enemy[i][j].status = unspawned;
 					}					
 		}
@@ -830,14 +831,14 @@ void wave1Init(void){	//intializing each wave separately in case we want differe
 					else if(i == 2){ // third row
 						wave[1].enemy[i][j].image = enemy_mydaq;
 						wave[1].enemy[i][j].speed = 1;
-						wave[1].enemy[i][j].health = 2;
-						wave[1].enemy[i][j].score = 20;
+						wave[1].enemy[i][j].health = 3;
+						wave[1].enemy[i][j].score = 30;
 					}
 					else if(i == 3){ // fourth row
 						wave[1].enemy[i][j].image = enemy_mydaq;
 						wave[1].enemy[i][j].speed = 1;
-						wave[1].enemy[i][j].health = 2;
-						wave[1].enemy[i][j].score = 20;
+						wave[1].enemy[i][j].health = 3;
+						wave[1].enemy[i][j].score = 30;
 					}	
 		}
 		//wave[1].row_speed[i] = wave[1].enemy[i][0].speed;
@@ -864,21 +865,21 @@ void wave2Init(void){	//intializing each wave separately in case we want differe
 					else if(i == 1){ // second row
 						wave[2].enemy[i][j].image = enemy_mydaq;
 						wave[2].enemy[i][j].speed = 1;
-						wave[2].enemy[i][j].health = 2;
-						wave[2].enemy[i][j].score = 20;
+						wave[2].enemy[i][j].health = 3;
+						wave[2].enemy[i][j].score = 30;
 						
 					}
 					else if(i == 2){ // third row
 						wave[2].enemy[i][j].image = enemy_mydaq;
 						wave[2].enemy[i][j].speed = 1;
-						wave[2].enemy[i][j].health = 2;
-						wave[2].enemy[i][j].score = 20;
+						wave[2].enemy[i][j].health = 3;
+						wave[2].enemy[i][j].score = 30;
 					}
 					else if(i == 3){ // fourth row
 						wave[2].enemy[i][j].image = enemy_debug;
 						wave[2].enemy[i][j].speed = 1;
-						wave[2].enemy[i][j].health = 4;
-						wave[2].enemy[i][j].score = 40;
+						wave[2].enemy[i][j].health = 6;
+						wave[2].enemy[i][j].score = 60;
 					}
 			
 			
@@ -901,27 +902,27 @@ void wave3Init(void){	//intializing each wave separately in case we want differe
 					if(i == 0){				// first row
 						wave[3].enemy[i][j].image = enemy_debug;
 						wave[3].enemy[i][j].speed = 1;
-						wave[3].enemy[i][j].health = 4;
-						wave[3].enemy[i][j].score = 40;
+						wave[3].enemy[i][j].health = 6;
+						wave[3].enemy[i][j].score = 60;
 					}
 					else if(i == 1){ // second row
 						wave[3].enemy[i][j].image = enemy_debug;
 						wave[3].enemy[i][j].speed = 1;
-						wave[3].enemy[i][j].health = 4;
-						wave[3].enemy[i][j].score = 40;
+						wave[3].enemy[i][j].health = 6;
+						wave[3].enemy[i][j].score = 60;
 						
 					}
 					else if(i == 2){ // third row
 						wave[3].enemy[i][j].image = enemy_debug;
 						wave[3].enemy[i][j].speed = 1;
-						wave[3].enemy[i][j].health = 4;
-						wave[3].enemy[i][j].score = 40;
+						wave[3].enemy[i][j].health = 6;
+						wave[3].enemy[i][j].score = 60;
 					}
 					else if(i == 3){ // fourth row
 						wave[3].enemy[i][j].image = enemy_debug;
 						wave[3].enemy[i][j].speed = 1;
-						wave[3].enemy[i][j].health = 4;
-						wave[3].enemy[i][j].score = 40;
+						wave[3].enemy[i][j].health = 6;
+						wave[3].enemy[i][j].score = 60;
 					}
 					
 		}
@@ -1397,6 +1398,11 @@ void moveEnemies(void){
 
 // uses a switch(wave_number) to print messages after each wave is cleared (using ST7735_DrawString)
 void printWaveClearedMessages(void){ 
+		//CHANGE THIS IF_STATEMENT ONCE WE ADD IN FINAL BOSS
+		if(wave_number == 3){
+			wave_number++; //goes to case 4 aka printWinScreen
+		}
+	
 		switch(wave_number){
 				case 0:
 					ST7735_DrawString(4, 3, msg1pt, 0xFFFF);
@@ -1411,12 +1417,26 @@ void printWaveClearedMessages(void){
 					ST7735_DrawString(4, 3, msg4pt, 0xFFFF);
 					break;
 				case 4:
-					ST7735_DrawString(4,3, msg5pt, 0xFFFF);	//final boss msg
+					printWinScreen();
+					//ST7735_DrawString(4,3, msg5pt, 0xFFFF);	//final boss msg
 				default:	
 					//output you win message and display score here
 					break;
 		}
 }//end of function //
+
+
+void printWinScreen(void){
+		ST7735_DrawString(5,6, winpmsgpt, 0xFFFF);	//you passed.
+	  ST7735_DrawString(2, 7, msg_finalscore, 0xFFFF); 
+			for(int i = 3; i >= 0; i--){ //convert 4 digit integer score to char array scorept
+					scorept[i] = ((total_score % 10) + 0x30);	// integer score value is converted to a character array of 4 digits and a null sentinel
+					total_score /= 10;
+			}
+			scorept[4] = 0; // null terminate the last element in the scorept char array
+			ST7735_DrawString(15, 7, scorept, 0xFFFF);
+			while(1){} //freeze the game on the game over screen permanantly
+}// end of func
 
 
 
@@ -1690,7 +1710,7 @@ void DetectPE1(void){
 																	}	
 																	//ALREADY SET WAVECLEAR TO A CHAIN REACTION EXPLOSION SOUND INSTEAD AT LINE 1623 - 1625:
 																		//sound_pointer = explosion2; //set current_sound to explosion only if enemy health becomes 0 (replace w explosion1 if new sound doesn't fit animiation)
-																		//sound_length = 6919;				//set sound length (<-- change to 6919 if using explosion with louder volume
+																		//sound_length = 6960;				//set sound length (<-- change to 6919 if using explosion with louder volume
 																		//sound_index = 0;						//reset index
 														}// only check enemies that are alive
 													}//iterate for each of 4 enemies
@@ -1854,13 +1874,13 @@ void DetectMissileEnemyCollision(void){
 													explosion_anim[i].y = (wave[wave_number].enemy[k][j].y + 10);
 												}	
 											sound_pointer = explosion2; //set current_sound to explosion only if enemy health becomes 0 (replace w explosion1 if new sound doesn't fit animiation)
-											sound_length = 6919;				//set sound length (<-- change to 6919 if using explosion with louder volume
+											sound_length = 6960;				//set sound length (<-- change to 6919 if using explosion with louder volume
 											sound_index = 0;						//reset index
 												
 											}//end of if-statement for health == 0
 											else{	// different sound effect if enemy health not reduced to 0
 												sound_pointer = enemyoof;	
-												sound_length = 3904;
+												sound_length = 3183;
 												sound_index = 0;
 											}
 											missiles[i].status = dying;	// update missile status to DYING NOT DEAD
@@ -1905,13 +1925,13 @@ void DetectMissileEnemyCollision(void){
 												explosion_anim[i].y = (wave[wave_number].enemy[k][j].y + 10);
 											}	
 										sound_pointer = explosion2; //set current_sound to explosion only if enemy health becomes 0 (replace w explosion1 if new sound doesn't fit animiation)
-										sound_length = 6919;				//set sound length (<-- change to 6919 if using explosion with louder volume
+										sound_length = 6960;				//set sound length (<-- change to 6919 if using explosion with louder volume
 										sound_index = 0;						//reset index
 											
 										}//end of if-statement for health == 0
 										else{	// different sound effect if enemy health not reduced to 0
 											sound_pointer = enemyoof;	
-											sound_length = 3904;
+											sound_length = 3183;
 											sound_index = 0;
 										}
 										missile_LED.status = dying;	// update missile status to DYING NOT DEAD
@@ -1955,13 +1975,13 @@ void DetectMissileEnemyCollision(void){
 												explosion_anim[i].y = (wave[wave_number].enemy[k][j].y + 10);
 											}	
 										sound_pointer = explosion2; //set current_sound to explosion only if enemy health becomes 0 (replace w explosion1 if new sound doesn't fit animiation)
-										sound_length = 6919;				//set sound length (<-- change to 6919 if using explosion with louder volume
+										sound_length = 6960;				//set sound length (<-- change to 6919 if using explosion with louder volume
 										sound_index = 0;						//reset index
 											
 										}//end of if-statement for health == 0
 										else{	// different sound effect if enemy health not reduced to 0
 											sound_pointer = enemyoof;	
-											sound_length = 3904;
+											sound_length = 3183;
 											sound_index = 0;
 										}	
 									}//end of if-statement for collision check on all 4 sides
