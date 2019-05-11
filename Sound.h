@@ -18,9 +18,9 @@ extern const unsigned char enemyoof[2617]; //.237 secs
 extern const unsigned char playerdeathaudio[23748]; // about 2.15 secs
 extern const unsigned char powerupequipped[6515];
 extern const unsigned char nocharges[7057];
-extern const unsigned char gameover[40631];
+extern const unsigned char gameover[31750]; //about 2.88 secs
 extern const unsigned char winmusic[47482];
-extern const unsigned char dramaticexplosion[33248]; // about 3.02 seconds
+extern const unsigned char dramaticexplosion[33134]; // about 3 seconds
 
 //void Sound_Init(void);
 //void Sound_Play(const uint8_t *pt, uint32_t count);
