@@ -71,9 +71,9 @@
 #define PE0       (*((volatile uint32_t *)0x40024004))
 #define PE1				(*((volatile uint32_t *)0x40024008))
 	
-#define bigMissile_Idx	0
-#define laser_Idx				1
-#define waveClear_Idx		2
+#define bigMissile_Idx 0
+#define laser_Idx 1
+#define waveClear_Idx 2
 //FUNCTION PROTOTYPES BELOW
 //----------------------------------------------------------------------------------------------------
 void DisableInterrupts(void); // Disable interrupts
@@ -131,8 +131,8 @@ void spawnNextRow(void); // spawns new row every 3 seconds based on counter_125m
 
 // SYSTICK HELPER FUNCTIONS
 void DetectEnemyPlayerCollision(void); // check if enemy has collided with player sprite --> IF SO, SETS gaeOver_flag TO 1
-void DetectEnemyAtBottom(void); // Check if enemy y position == 159 aka touches bottom of screen --> IF SO, SETS gaeOver_flag TO 1
-void getADC(void); // put ADC data into ADCMAIL using ADC_In() and set semaphore flag to 1 (DOES NOT RUN IF gaeOver_flag SET TO 1)
+void DetectEnemyAtBottom(void); // Check if enemy y position == 159 aka touches bottom of screen --> IF SO, SETS gameOver_flag TO 1
+void getADC(void); // put ADC data into ADCMAIL using ADC_In() and set semaphore flag to 1 (DOES NOT RUN IF gameOver_flag SET TO 1)
 void DetectPE0(void); // check primary button press (red) (DOES NOT RUN IF GAMEOVERFLAG SET TO 1)
 void DetectPE1(void); // check secondary button press (yellow) (DOES NOT RUN IF GAMEOVERFLAG SET TO 1)
 void DetectMissilePowerupCollision(void);
